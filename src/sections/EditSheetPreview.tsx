@@ -35,6 +35,10 @@ export function EditSheetPreview({
         <div className="sheet-preview__grabber" />
         <div className="section-kicker">Правка записи</div>
         <h2>Редактирование</h2>
+        <div className="sheet-preview__summary">
+          <span>{draft.category}</span>
+          <strong>{new Intl.NumberFormat('ru-RU').format(Number(draft.amount || 0))} ₽</strong>
+        </div>
         <p className="sheet-preview__note">Исправь сумму, категорию или описание. Изменения применятся сразу после сохранения.</p>
         <div className="field-grid">
           <label>
