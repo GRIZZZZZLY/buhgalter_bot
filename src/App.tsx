@@ -14,6 +14,7 @@ import { useDashboard } from './useDashboard'
 
 export default function App() {
   const [period, setPeriod] = useState<Period>('month')
+  const [theme, setTheme] = useState<'light' | 'dark'>('light')
   const [tg, setTg] = useState(() => initTelegramWebApp())
   const dashboard = useDashboard(period)
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null)
@@ -21,12 +22,20 @@ export default function App() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    setTg(initTelegramWebApp())
+    const telegram = initTelegramWebApp()
+    setTg(telegram)
+    if (telegram.colorScheme === 'dark') {
+      setTheme('dark')
+    }
   }, [])
 
   useEffect(() => {
     setTransactionsState(dashboard.transactions)
   }, [dashboard.transactions])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   const title = useMemo(() => {
     switch (period) {
@@ -72,7 +81,12 @@ export default function App() {
             <div className="app-header__kicker">Казначей</div>
             <p>Финансовая летопись · {title}</p>
           </div>
-          <StatusBadge source={dashboard.source} isTelegram={tg.isTelegram} />
+          <div className="app-header__controls">
+            <button className="theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
+              {theme === 'light' ? 'Тёмная тема' : 'Светлая тема'}
+            </button>
+            <StatusBadge source={dashboard.source} isTelegram={tg.isTelegram} />
+          </div>
         </header>
 
         <HeroCard balance={dashboard.summary.balance} income={dashboard.summary.income} expense={dashboard.summary.expense} />
