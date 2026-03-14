@@ -2,14 +2,16 @@ export function HeroCard({ balance, income, expense }: { balance: number; income
   const format = (value: number) => new Intl.NumberFormat('ru-RU').format(value)
 
   return (
-    <section className="hero-card ornate-frame">
+    <section className="hero-card ornate-frame ornate-frame--hero">
+      <div className="hero-card__crest">✦</div>
       <div className="hero-card__topline">
-        <div className="hero-card__eyebrow">Летопись казны</div>
-        <div className="hero-card__seal">◈</div>
+        <div className="hero-card__eyebrow">Главная книга</div>
+        <div className="hero-card__chapter">Месячная казна</div>
       </div>
-      <h1 className="hero-card__title">Остаток</h1>
+      <h1 className="hero-card__title">Остаток в казне</h1>
       <div className="hero-card__balance">{format(balance)} ₽</div>
-      <p className="hero-card__note">Видно движение казны за выбранный период без лишнего шума.</p>
+      <p className="hero-card__note">Сводка доходов и расходов в виде живой летописи, а не сухой таблицы.</p>
+      <div className="hero-card__ornament" />
       <div className="hero-card__meta">
         <div className="hero-metric is-income">
           <span>Доход</span>
