@@ -2,19 +2,26 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import type { CategorySlice } from '../lib/types'
 
 export function AnalyticsSection({ data }: { data: CategorySlice[] }) {
+  const total = data.reduce((acc, item) => acc + item.value, 0)
+  const formattedTotal = new Intl.NumberFormat('ru-RU').format(total)
+
   return (
-    <section className="surface-card ornate-divider">
+    <section className="surface-card ornate-divider analytics-card">
       <div className="section-head">
         <div>
           <div className="section-kicker">Структура трат</div>
           <h2>Категории</h2>
         </div>
+        <div className="analytics-total">
+          <span>Всего</span>
+          <strong>{formattedTotal} ₽</strong>
+        </div>
       </div>
 
-      <div className="chart-shell">
+      <div className="chart-shell chart-shell--enhanced">
         <ResponsiveContainer width="100%" height={220}>
           <PieChart>
-            <Pie data={data} dataKey="value" innerRadius={58} outerRadius={88} paddingAngle={3} stroke="none">
+            <Pie data={data} dataKey="value" innerRadius={62} outerRadius={92} paddingAngle={3} stroke="none">
               {data.map((entry) => (
                 <Cell key={entry.name} fill={entry.fill} />
               ))}
@@ -22,6 +29,10 @@ export function AnalyticsSection({ data }: { data: CategorySlice[] }) {
             <Tooltip formatter={(value: number) => `${new Intl.NumberFormat('ru-RU').format(value)} ₽`} />
           </PieChart>
         </ResponsiveContainer>
+        <div className="chart-center-badge">
+          <span>Казна</span>
+          <strong>{formattedTotal} ₽</strong>
+        </div>
       </div>
 
       <div className="legend-list">
