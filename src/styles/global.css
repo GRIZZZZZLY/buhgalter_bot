@@ -319,3 +319,90 @@ button { cursor: pointer; }
   .sheet-actions { flex-wrap: wrap; }
   .danger-button, .ghost-button, .primary-button { flex:1 1 100%; }
 }
+
+
+.hero-card__motif {
+  position: absolute;
+  top: 22px;
+  color: rgba(201, 150, 46, 0.55);
+  font-size: 18px;
+  letter-spacing: 0.2em;
+}
+.hero-card__motif--left { left: 24px; }
+.hero-card__motif--right { right: 78px; }
+.hero-card__crest {
+  font-size: 18px;
+}
+.hero-card__ornament {
+  position: relative;
+}
+.hero-card__ornament::before,
+.hero-card__ornament::after {
+  content: '✦';
+  position: absolute;
+  top: -2px;
+  color: rgba(201,150,46,.72);
+  font-size: 12px;
+}
+.hero-card__ornament::before { left: 0; }
+.hero-card__ornament::after { right: 0; }
+.chart-corners {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(201,150,46,.68);
+  font-size: 12px;
+  letter-spacing: .35em;
+  z-index: 1;
+}
+.legend-item {
+  position: relative;
+}
+.legend-item::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(201,150,46,.20), transparent);
+}
+.ledger-row__icon span {
+  position: relative;
+  z-index: 1;
+}
+.ledger-row__icon::before {
+  content: '✦';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(201,150,46,.18);
+  font-size: 18px;
+}
+.sheet-preview__summary {
+  position: relative;
+}
+.sheet-preview__summary::before,
+.sheet-preview__summary::after {
+  content: '❖';
+  color: rgba(201,150,46,.58);
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+}
+.sheet-preview__summary::before { left: 10px; }
+.sheet-preview__summary::after { right: 10px; }
+.theme-toggle {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+:root[data-theme='dark'] .hero-card__motif,
+:root[data-theme='dark'] .chart-corners,
+:root[data-theme='dark'] .sheet-preview__summary::before,
+:root[data-theme='dark'] .sheet-preview__summary::after,
+:root[data-theme='dark'] .hero-card__ornament::before,
+:root[data-theme='dark'] .hero-card__ornament::after {
+  color: rgba(243, 197, 104, 0.72);
+}

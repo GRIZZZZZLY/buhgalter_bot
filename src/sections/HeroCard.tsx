@@ -3,6 +3,8 @@ export function HeroCard({ balance, income, expense }: { balance: number; income
 
   return (
     <section className="hero-card ornate-frame ornate-frame--hero">
+      <div className="hero-card__motif hero-card__motif--left">✥</div>
+      <div className="hero-card__motif hero-card__motif--right">✥</div>
       <div className="hero-card__crest">✦</div>
       <div className="hero-card__topline">
         <div className="hero-card__eyebrow">Главная книга</div>

@@ -27,7 +27,9 @@ export function TransactionsSection({
         {items.map((item, index) => (
           <button className="ledger-row ledger-row--button" key={item.id} onClick={() => onSelect(item)}>
             <div className="ledger-row__index">{String(index + 1).padStart(2, '0')}</div>
-            <div className="ledger-row__icon">{transactionMark(item.type)}</div>
+            <div className="ledger-row__icon">
+              <span>{transactionMark(item.type)}</span>
+            </div>
             <div className="ledger-row__left">
               <div className="ledger-row__title">{item.title}</div>
               <div className="ledger-row__meta">{item.category} · {item.timestamp}</div>

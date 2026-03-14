@@ -28,6 +28,7 @@ export function AnalyticsSection({ data }: { data: CategorySlice[] }) {
       ) : null}
 
       <div className="chart-shell chart-shell--enhanced">
+        <div className="chart-corners chart-corners--top">✦ ✧ ✦</div>
         <ResponsiveContainer width="100%" height={240}>
           <PieChart>
             <Pie data={data} dataKey="value" innerRadius={66} outerRadius={96} paddingAngle={4} stroke="none">
