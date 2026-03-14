@@ -523,3 +523,131 @@ body::before {
 .status-banner {
   border-radius: 18px;
 }
+
+
+.app-header {
+  position: relative;
+  padding-bottom: 10px;
+}
+.app-header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 12px;
+  background:
+    linear-gradient(90deg, transparent, rgba(179,135,40,.35), transparent),
+    radial-gradient(circle, rgba(39,84,197,.35) 0 1.5px, transparent 2.5px) center/24px 12px repeat-x;
+  opacity: .55;
+}
+.app-header p {
+  max-width: 280px;
+  color: #5f4d42;
+}
+.hero-card__topline {
+  margin-right: 52px;
+}
+.hero-card__chapter {
+  color: #7b654f;
+  font-size: 12px;
+}
+.hero-card__title {
+  margin: 10px 0 10px;
+}
+.hero-card__balance {
+  letter-spacing: -0.03em;
+}
+.hero-card__note {
+  color: #635246;
+}
+.period-tabs {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  padding: 6px;
+  border-radius: 18px;
+  background: rgba(255,248,240,.72);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(104,80,61,.10);
+  box-shadow: 0 10px 28px rgba(69,42,22,.08);
+}
+.period-tab {
+  font-family: 'Spectral', serif;
+  font-size: 14px;
+  letter-spacing: .01em;
+  padding: 11px 8px;
+}
+.period-tab.is-active {
+  background: linear-gradient(180deg, #271c18, #1d1511);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 8px 18px rgba(23,15,12,.22);
+}
+.section-head h2,
+.sheet-preview h2 {
+  font-size: 24px;
+  letter-spacing: 0.01em;
+}
+.section-kicker {
+  color: #7a5a3d;
+}
+.analytics-card,
+.transactions-card,
+.empty-state {
+  overflow: hidden;
+}
+.legend-name,
+.ledger-row__meta,
+.sheet-preview__note,
+.field-grid span {
+  color: #6a574b;
+}
+.legend-item strong {
+  font-family: 'Spectral', serif;
+  font-size: 15px;
+}
+.ledger-row__title {
+  font-family: 'Spectral', serif;
+  font-size: 18px;
+  font-weight: 600;
+}
+.ledger-row__meta {
+  margin-top: 2px;
+}
+.ledger-row__amount {
+  font-family: 'Spectral', serif;
+  font-size: 18px;
+}
+.ghost-button {
+  background: rgba(255,255,255,.45);
+}
+.primary-button {
+  background: linear-gradient(180deg, #2047a8, #17357d);
+  box-shadow: 0 10px 20px rgba(27,56,125,.25);
+}
+.danger-button {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4);
+}
+.field-grid input {
+  font-size: 15px;
+}
+.empty-state {
+  padding: 24px 20px;
+}
+.empty-state h2 {
+  font-size: 24px;
+}
+.status-badge {
+  font-family: 'Spectral', serif;
+  font-size: 12px;
+}
+.status-banner {
+  font-family: 'Spectral', serif;
+}
+@media (max-width: 420px) {
+  .hero-card__title {
+    font-size: 24px;
+  }
+  .ledger-row__title {
+    font-size: 17px;
+  }
+}
