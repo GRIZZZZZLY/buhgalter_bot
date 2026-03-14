@@ -5,6 +5,7 @@ import { EmptyState } from './sections/EmptyState'
 import { HeroCard } from './sections/HeroCard'
 import { TransactionsSection } from './sections/TransactionsSection'
 import { StatusBadge } from './sections/StatusBadge'
+import { StatusBanner } from './sections/StatusBanner'
 import { PeriodTabs } from './components/PeriodTabs'
 import { removeTransaction, updateTransaction } from './lib/api'
 import type { EditableTransaction, Period, Transaction } from './lib/types'
@@ -75,8 +76,8 @@ export default function App() {
         </header>
 
         <HeroCard balance={dashboard.summary.balance} income={dashboard.summary.income} expense={dashboard.summary.expense} />
+        <StatusBanner loading={dashboard.loading} source={dashboard.source} />
         <PeriodTabs value={period} onChange={setPeriod} />
-        {dashboard.loading ? <section className="surface-card loading-card">Обновляю летопись...</section> : null}
         {dashboard.chart.length ? <AnalyticsSection data={dashboard.chart} /> : <EmptyState title="Нет данных для сводки" description="Когда появятся записи, здесь будет видна структура расходов." />}
         {transactionsState.length ? (
           <TransactionsSection items={transactionsState} onSelect={setSelectedTransaction} />

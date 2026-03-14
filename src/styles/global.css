@@ -225,3 +225,25 @@ button { cursor: pointer; }
 .sheet-preview {
   width: min(520px, 100%); margin-top: 10px;
 }
+
+
+.hero-card__topline { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.hero-card__seal {
+  width: 34px; height: 34px; display:grid; place-items:center;
+  border-radius: 999px; border: 1px solid rgba(179,135,40,0.28);
+  color: var(--gold); background: rgba(255,255,255,0.4); font-size: 15px;
+}
+.hero-card__note { color: var(--muted); margin: 0 0 16px; line-height: 1.45; }
+.hero-metric {
+  padding: 12px 14px; border-radius: 16px; background: rgba(255,255,255,0.45);
+  border: 1px solid rgba(104,80,61,0.08);
+}
+.hero-metric.is-income strong { color: var(--teal); }
+.hero-metric.is-expense strong { color: var(--red); }
+.status-banner {
+  margin-bottom: 16px; padding: 12px 14px; border-radius: 16px;
+  border: 1px solid rgba(104,80,61,0.14); background: rgba(255,250,240,.72);
+  color: var(--muted); font-size: 14px;
+}
+.status-banner.is-warning { color: #7a5622; background: rgba(179,135,40,0.08); }
+.status-banner.is-success { color: #1f5d48; background: rgba(62,100,114,0.08); }
