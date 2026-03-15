@@ -1,0 +1,62 @@
+ru:
+  categories:
+    - slug: food
+      type: expense
+      synonyms: [еда, обед, ужин, завтрак, кафе, ресторан, кофе, продукты, продуктов, продуктосы, самокат, самокате, вкусвилл, пятерка, пятёрка, перекресток, перекрёсток, магнит, шаурма, шаурму, суши, роллы, бургер, пицца, доставка, фастфуд]
+    - slug: transport
+      type: expense
+      synonyms: [транспорт, такси, метро, автобус, бензин, парковка, заправка, маршрутка, электричка, поездка, каршеринг]
+    - slug: housing
+      type: expense
+      synonyms: [жильё, жилье, аренда, квартира, коммуналка, свет, газ, квартплата, ремонт]
+    - slug: telecom
+      type: expense
+      synonyms: [интернет, связь, телефон, мобила, симка, мобильный, тариф, eсим, esim]
+    - slug: entertainment
+      type: expense
+      synonyms: [развлечения, кино, игры, концерт, бар, тусовка, кафешка, стим, ps, playstation, xbox, хобби]
+    - slug: subscriptions
+      type: expense
+      synonyms: [подписка, подписки, spotify, спотифай, youtube, ютуб, netflix, нетфликс, tg premium, telegram premium, chatgpt, claude, midjourney, cursor]
+    - slug: health
+      type: expense
+      synonyms: [здоровье, аптека, врач, лекарства, стоматолог, больница, анализы, таблетки, клиника]
+    - slug: beauty
+      type: expense
+      synonyms: [красота, ресницы, маникюр, ногти, брови, парикмахер, стрижка, косметика, косметику, уход, салон]
+    - slug: shopping
+      type: expense
+      synonyms: [покупки, одежда, одежду, обувь, аксессуары, маркетплейс, ozon, озон, wildberries, вб, wb, электроника]
+    - slug: home
+      type: expense
+      synonyms: [дом, бытовая химия, уборка, кухня, посуда, товары для дома, питомцы, кот, кошка, собака]
+    - slug: work
+      type: expense
+      synonyms: [работа, софт, хостинг, домен, домены, api, железо, сервер, vps, openai, openrouter]
+    - slug: education
+      type: expense
+      synonyms: [обучение, курсы, книги, уроки, учеба, учёба]
+    - slug: gifts
+      type: expense
+      synonyms: [подарки, подарок, благотворительность, донаты, донат]
+    - slug: fees
+      type: expense
+      synonyms: [комиссии, комиссия, комиссию, налоги, налог, штраф, штрафы, проценты, банк]
+    - slug: salary
+      type: income
+      synonyms: [зарплата, аванс, получка, доход, зп, зарп, оклад]
+    - slug: freelance
+      type: income
+      synonyms: [фриланс, проект, заказ, клиент, клиента, оплата, халтура, шабашка, подработка, гонорар]
+    - slug: bonus
+      type: income
+      synonyms: [премия, премии, бонус, бонусы, кэшбек, кешбек, cashback]
+    - slug: transfer
+      type: income
+      synonyms: [перевод, переводы, переводом, подарок, подарили, долг вернули, возврат долга]
+    - slug: refund
+      type: income
+      synonyms: [возврат, возвраты, вернули, рефанд, refund, подписку, подписка]
+    - slug: other
+      type: both
+      synonyms: [прочее, другое, разное, всякое]

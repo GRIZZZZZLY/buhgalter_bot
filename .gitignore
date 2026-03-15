@@ -2,3 +2,16 @@ node_modules/
 dist/
 .env
 *.log
+__pycache__/
+*.pyc
+*.pyo
+backend/.venv/
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/*.egg-info/
+backend/*.db
+backend/*.swp
+backend/runtime/audio/*
+!backend/runtime/audio/.gitkeep
+backend/runtime/logs/*
+!backend/runtime/logs/.gitkeep
