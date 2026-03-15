@@ -134,6 +134,9 @@ button { cursor: pointer; }
   border-radius: 24px;
   backdrop-filter: blur(10px);
 }
+.hero-card {
+  border-color: rgba(224,174,88,0.10);
+}
 :root[data-theme='dark'] .surface-card,
 :root[data-theme='dark'] .sheet-preview {
   background: linear-gradient(180deg, rgba(46,19,18,.78), rgba(31,14,14,.74));
@@ -161,10 +164,13 @@ button { cursor: pointer; }
 .ornate-frame::before {
   position:absolute; inset:10px; border:1px solid rgba(179,135,40,0.22); border-radius:18px;
 }
-.ornate-frame--hero::after {
-  content:''; position:absolute; inset:18px; border-radius:22px; border:1px solid rgba(39,84,197,0.14);
+.hero-card.ornate-frame::before {
+  display: none;
 }
-:root[data-theme='dark'] .ornate-frame--hero::after { border-color: rgba(224,174,88,0.14); }
+.ornate-frame--hero::after {
+  content:''; position:absolute; inset:12px; border-radius:20px; border:1px solid rgba(179,135,40,0.22);
+}
+:root[data-theme='dark'] .ornate-frame--hero::after { border-color: rgba(224,174,88,0.16); }
 .ornate-frame-soft::before {
   position:absolute; inset:8px; border:1px dashed rgba(39,84,197,0.22); border-radius:18px;
 }
