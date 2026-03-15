@@ -438,3 +438,31 @@ button { cursor: pointer; }
 :root[data-theme='dark'] .hero-card__ornament::after {
   color: rgba(243, 197, 104, 0.72);
 }
+
+
+.chart-shell--reveal {
+  animation: chartReveal .75s ease-out both;
+}
+.chart-center-badge--reveal {
+  animation: chartBadgeReveal .85s ease-out both;
+}
+@keyframes chartReveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes chartBadgeReveal {
+  from {
+    opacity: 0;
+    transform: scale(.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
