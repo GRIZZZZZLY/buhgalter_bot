@@ -16,7 +16,7 @@ export function PeriodTabs({ value, onChange }: { value: Period; onChange: (valu
           className={item === value ? 'period-tab is-active' : 'period-tab'}
           onClick={() => onChange(item)}
         >
-          {labels[item]}
+          <span className="period-tab__label">{labels[item]}</span>
         </button>
       ))}
     </div>
