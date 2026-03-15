@@ -92,7 +92,7 @@ export default function App() {
         <HeroCard balance={dashboard.summary.balance} income={dashboard.summary.income} expense={dashboard.summary.expense} />
         <StatusBanner loading={dashboard.loading} source={dashboard.source} />
         <PeriodTabs value={period} onChange={setPeriod} />
-        {dashboard.chart.length ? <AnalyticsSection data={dashboard.chart} /> : <EmptyState title="Нет данных для сводки" description="Когда появятся записи, здесь будет видна структура расходов." />}
+        {dashboard.chart.length ? <AnalyticsSection data={dashboard.chart} theme={theme} /> : <EmptyState title="Нет данных для сводки" description="Когда появятся записи, здесь будет видна структура расходов." />}
         {transactionsState.length ? (
           <TransactionsSection items={transactionsState} onSelect={setSelectedTransaction} />
         ) : (

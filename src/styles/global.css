@@ -293,12 +293,12 @@ button { cursor: pointer; }
 .analytics-highlight em { color: var(--muted); font-style: normal; }
 .chart-shell--enhanced { position:relative; display:flex; align-items:center; justify-content:center; margin-top:6px; height:240px; }
 .chart-center-badge {
-  position:absolute; width:116px; height:116px; border-radius:999px; display:grid; place-items:center; text-align:center;
-  background: linear-gradient(180deg, rgba(255,250,242,.96), rgba(247,238,225,.96)); border:2px solid rgba(179,135,40,.24); box-shadow:0 12px 28px rgba(69,42,22,.10);
+  position:absolute; width:104px; height:104px; border-radius:999px; display:grid; place-items:center; text-align:center;
+  background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(241,247,253,.96)); border:1px solid rgba(75,121,198,.18); box-shadow:0 10px 24px rgba(43,73,116,.10);
 }
-:root[data-theme='dark'] .chart-center-badge { background: linear-gradient(180deg, rgba(92,37,31,.96), rgba(55,23,21,.96)); border-color: rgba(239,192,112,.28); box-shadow: 0 12px 28px rgba(0,0,0,.22); }
+:root[data-theme='dark'] .chart-center-badge { background: linear-gradient(180deg, rgba(78,31,28,.98), rgba(50,20,19,.96)); border-color: rgba(224,174,88,.18); box-shadow: 0 12px 28px rgba(0,0,0,.22); }
 .chart-center-badge span { color: var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
-.chart-center-badge strong { font-family:'Spectral', serif; font-size:16px; line-height:1.2; }
+.chart-center-badge strong { font-family:'Spectral', serif; font-size:17px; line-height:1.2; }
 .legend-list { display:grid; gap:10px; }
 .legend-item { display:grid; grid-template-columns:26px 12px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-radius:18px; background: linear-gradient(180deg, rgba(255,255,255,.58), rgba(255,247,238,.48)); border:1px solid rgba(104,80,61,.08); }
 :root[data-theme='dark'] .legend-item { background: linear-gradient(180deg, rgba(68,29,27,.34), rgba(42,19,18,.28)); border-color: rgba(224,174,88,.08); }
@@ -388,16 +388,6 @@ button { cursor: pointer; }
 }
 .hero-card__ornament::before { left: 0; }
 .hero-card__ornament::after { right: 0; }
-.chart-corners {
-  position: absolute;
-  top: -4px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: rgba(75,121,198,.68);
-  font-size: 12px;
-  letter-spacing: .35em;
-  z-index: 1;
-}
 .legend-item {
   position: relative;
 }
