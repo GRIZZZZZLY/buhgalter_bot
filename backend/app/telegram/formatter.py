@@ -44,7 +44,9 @@ class TreasuryFormatter:
             "Команды:\n"
             "• /summary — сводка\n"
             "• /delete — удалить одну запись\n"
-            "• /deleteall — удалить все записи"
+            "• /deleteall — удалить все записи\n"
+            "• /budget — бюджеты по категориям\n"
+            "• /settings — настройки (бюджет, напоминания, часовой пояс)"
         )
 
     def format_saved(self, operation_label: str, amount: str, category: str, balance: str) -> str:

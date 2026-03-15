@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.repositories.user_category_mapping_repository import UserCategoryMappingRepository
 from app.schemas.parser import ParseResult
 from app.services.parser_service import ParserService
 from app.services.transaction_service import TransactionService
@@ -29,6 +30,7 @@ class TelegramTextFlow:
         self.parser_service = parser_service or ParserService()
         self.transaction_service = TransactionService(db)
         self.voice_flow_service = VoiceFlowService(db, parser_service=self.parser_service)
+        self.mapping_repo = UserCategoryMappingRepository(db)
 
     def handle_text(self, telegram_user_id: int, text: str) -> dict[str, object]:
         normalized_text = self._normalize_incoming_text(text)
@@ -52,6 +54,34 @@ class TelegramTextFlow:
             suggestions = self.parser_service.suggest_categories(category_fragment)
             if suggestions and category_fragment and category_fragment not in self.parser_service.category_lookup:
                 normalized_category = self.parser_service.normalize_category_candidate(category_fragment)
+
+                # Check user's learned category mappings before asking
+                learned = self._check_learned_mapping(telegram_user_id, normalized_category)
+                if learned is not None:
+                    parsed_with_category = ParseResult(
+                        matched=True,
+                        confidence=parsed.confidence,
+                        confidence_label="high",
+                        transaction_type=parsed.transaction_type,
+                        amount=parsed.amount,
+                        category=learned,
+                        description=normalized_category,
+                        pattern=parsed.pattern,
+                        raw_input=parsed.raw_input,
+                    )
+                    item = self.transaction_service.create_from_parse(
+                        telegram_user_id=telegram_user_id, source="text", parsed=parsed_with_category,
+                    )
+                    self.mapping_repo.upsert(telegram_user_id, normalized_category, learned)
+                    self.db.commit()
+                    summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
+                    operation_label = "доход" if item.type == "income" else "расход"
+                    return {
+                        "action": "saved",
+                        "message": formatter.format_saved(operation_label, item.amount, item.category, self._signed(summary.balance)),
+                        "saved_category": item.category,
+                    }
+
                 return self._set_pending_category_resolution(telegram_user_id, parsed, normalized_category, suggestions, source="text")
 
             item = self.transaction_service.create_from_parse(
@@ -64,12 +94,41 @@ class TelegramTextFlow:
             return {
                 "action": "saved",
                 "message": formatter.format_saved(operation_label, item.amount, item.category, self._signed(summary.balance)),
+                "saved_category": item.category,
             }
         if parsed.confidence_label == "medium":
             raw_category = (parsed.description or "").strip()
             normalized_raw = self.parser_service._normalize(raw_category)
             if raw_category and normalized_raw not in self.parser_service.category_lookup:
                 normalized_category = self.parser_service.normalize_category_candidate(raw_category)
+
+                # Check user's learned category mappings before asking
+                learned = self._check_learned_mapping(telegram_user_id, normalized_category)
+                if learned is not None:
+                    parsed_with_category = ParseResult(
+                        matched=True,
+                        confidence=0.9,
+                        confidence_label="high",
+                        transaction_type=parsed.transaction_type or "expense",
+                        amount=parsed.amount,
+                        category=learned,
+                        description=normalized_category,
+                        pattern=parsed.pattern,
+                        raw_input=parsed.raw_input,
+                    )
+                    item = self.transaction_service.create_from_parse(
+                        telegram_user_id=telegram_user_id, source="text", parsed=parsed_with_category,
+                    )
+                    self.mapping_repo.upsert(telegram_user_id, normalized_category, learned)
+                    self.db.commit()
+                    summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
+                    operation_label = "доход" if item.type == "income" else "расход"
+                    return {
+                        "action": "saved",
+                        "message": formatter.format_saved(operation_label, item.amount, item.category, self._signed(summary.balance)),
+                        "saved_category": item.category,
+                    }
+
                 suggestions = self.parser_service.suggest_categories(normalized_category)
                 return self._set_pending_category_resolution(telegram_user_id, parsed, normalized_category, suggestions, source="text")
             return {
@@ -249,13 +308,29 @@ class TelegramTextFlow:
             source=pending.source,
             parsed=resolved,
         )
+
+        # Learn the merchant -> category mapping for future auto-categorization
+        if pending.raw_category:
+            self.mapping_repo.upsert(telegram_user_id, pending.raw_category.lower().strip(), category)
+            self.db.commit()
+
         summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
         operation_label = "доход" if item.type == "income" else "расход"
         return {
             "action": "saved",
             "message": formatter.format_saved(operation_label, item.amount, item.category, self._signed(summary.balance)),
+            "saved_category": item.category,
             "remove_keyboard": remove_keyboard,
         }
+
+    def _check_learned_mapping(self, telegram_user_id: int, merchant_text: str) -> str | None:
+        """Check if user has a learned category mapping for this merchant text.
+        Returns the category slug if confident enough, None otherwise."""
+        normalized = merchant_text.lower().strip()
+        mapping = self.mapping_repo.find(telegram_user_id, normalized)
+        if mapping is not None and self.mapping_repo.is_confident(mapping):
+            return mapping.category
+        return None
 
     @staticmethod
     def _normalize_incoming_text(text: str) -> str:

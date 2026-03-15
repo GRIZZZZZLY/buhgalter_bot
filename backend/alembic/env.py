@@ -3,10 +3,15 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.core.settings import settings
+from app.core.settings import get_settings
 from app.db.base import Base
 from app.models.transaction import Transaction  # noqa: F401
 from app.models.voice_log import VoiceLog  # noqa: F401
+from app.models.user import User  # noqa: F401
+from app.models.user_category_mapping import UserCategoryMapping  # noqa: F401
+from app.models.category_budget import CategoryBudget  # noqa: F401
+
+settings = get_settings()
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
