@@ -300,11 +300,11 @@ button { cursor: pointer; }
 .chart-center-badge span { color: var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
 .chart-center-badge strong { font-family:'Spectral', serif; font-size:17px; line-height:1.2; }
 .legend-list { display:grid; gap:10px; }
-.legend-item { display:grid; grid-template-columns:26px 12px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-radius:18px; background: linear-gradient(180deg, rgba(255,255,255,.58), rgba(255,247,238,.48)); border:1px solid rgba(104,80,61,.08); }
+.legend-item { display:grid; grid-template-columns:26px 12px minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 12px; border-radius:18px; background: linear-gradient(180deg, rgba(255,255,255,.58), rgba(255,247,238,.48)); border:1px solid rgba(104,80,61,.08); }
 :root[data-theme='dark'] .legend-item { background: linear-gradient(180deg, rgba(68,29,27,.34), rgba(42,19,18,.28)); border-color: rgba(224,174,88,.08); }
 .legend-rank { width:26px; color:#8a715d; font-family:'Spectral', serif; font-size:12px; }
 .legend-dot { width: 12px; height: 12px; border-radius: 999px; }
-.legend-name { color: var(--muted); }
+.legend-name { color: var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .legend-item strong { font-family:'Spectral', serif; font-size:15px; }
 
 .ledger-list { display:grid; gap:2px; }
@@ -316,10 +316,10 @@ button { cursor: pointer; }
 .ledger-row__index { color:#8a715d; font-family:'Spectral', serif; font-size:12px; width:24px; flex:0 0 auto; }
 .ledger-row__icon { width:42px; height:42px; border-radius:999px; display:grid; place-items:center; background: linear-gradient(180deg, rgba(255,255,255,.72), rgba(245,236,223,.68)); border:1px solid rgba(104,80,61,.10); color:var(--gold); flex:0 0 auto; }
 :root[data-theme='dark'] .ledger-row__icon { background: linear-gradient(180deg, rgba(93,39,34,.70), rgba(57,24,22,.58)); border-color: rgba(224,174,88,.10); }
-.ledger-row__left { flex:1 1 auto; }
-.ledger-row__title { font-family:'Spectral', serif; font-size:18px; font-weight:600; letter-spacing:.01em; }
-.ledger-row__meta { margin-top:2px; color: var(--muted); font-size:13px; }
-.ledger-row__amount { min-width:112px; text-align:right; font-family:'Spectral', serif; font-size:18px; font-weight:700; white-space:nowrap; }
+.ledger-row__left { flex:1 1 auto; min-width: 0; }
+.ledger-row__title { font-family:'Spectral', serif; font-size:18px; font-weight:600; letter-spacing:.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ledger-row__meta { margin-top:2px; color: var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ledger-row__amount { min-width:112px; flex-shrink:0; text-align:right; font-family:'Spectral', serif; font-size:18px; font-weight:700; white-space:nowrap; }
 .ledger-row__amount.is-income { color: var(--teal); }
 .ledger-row__amount.is-expense { color: var(--red); }
 
