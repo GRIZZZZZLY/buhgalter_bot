@@ -320,15 +320,6 @@ class TelegramTextFlow:
             "saved_transaction_id": str(item.id),
         }
 
-    def _check_learned_mapping(self, telegram_user_id: int, merchant_text: str) -> str | None:
-        """Check if user has a learned category mapping for this merchant text.
-        Returns the category slug if confident enough, None otherwise."""
-        normalized = merchant_text.lower().strip()
-        mapping = self.mapping_repo.find(telegram_user_id, normalized)
-        if mapping is not None and self.mapping_repo.is_confident(mapping):
-            return mapping.category
-        return None
-
     @staticmethod
     def _normalize_incoming_text(text: str) -> str:
         normalized = text.strip()
