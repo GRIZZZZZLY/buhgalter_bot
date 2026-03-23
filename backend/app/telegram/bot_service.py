@@ -7,8 +7,23 @@ from sqlalchemy.orm import Session
 from app.schemas.telegram import TelegramVoicePayload
 from app.services.audio_file_service import AudioFileService
 from app.services.transaction_service import TransactionService
+from app.services.yaml_learner_service import YamlLearnerService
 from app.telegram.formatter import TreasuryFormatter
 from app.telegram.handlers import TelegramTextFlow
+
+_KEYWORD_STOPLIST = {
+    "оплата", "перевод", "платёж", "платеж", "покупка",
+    "списание", "зачисление", "банк", "карта", "счёт", "счет",
+    "услуг", "услуга", "услуги", "сумма", "итого", "руб", "рублей",
+}
+
+
+def _extract_keyword(description: str) -> str | None:
+    for token in description.lower().split():
+        token = token.strip(".,!?;:()")
+        if len(token) >= 3 and token not in _KEYWORD_STOPLIST:
+            return token
+    return None
 
 
 @dataclass(slots=True)
@@ -57,7 +72,7 @@ class TelegramBotService:
             "message": self.formatter.format_deleteall_done(deleted_count),
         }
 
-    def process_voice_message(self, payload: TelegramVoicePayload) -> tuple[dict[str, str], VoiceProcessingDebug]:
+    def process_voice_message(self, payload: TelegramVoicePayload) -> tuple[dict, VoiceProcessingDebug]:
         ogg_path = self.audio_service.temp_copy(payload.original_file_path, ".ogg")
         wav_path = None
         converted = False
@@ -77,6 +92,9 @@ class TelegramBotService:
                 "action": "voice_fallback",
                 "message": f"Не смог обработать голосовое локально: {exc}",
             }, VoiceProcessingDebug(ogg_path=ogg_path, wav_path=wav_path, converted=converted)
+        finally:
+            # Always clean up temporary audio files regardless of success or failure
+            self.audio_service.cleanup_audio_files(ogg_path, wav_path or "")
 
     def start_voice_edit(self, voice_log_id: str) -> dict[str, str]:
         return self.flow.start_voice_edit(voice_log_id)
@@ -86,3 +104,43 @@ class TelegramBotService:
 
     def cancel_voice(self, voice_log_id: str) -> dict[str, str]:
         return self.flow.cancel_voice(voice_log_id)
+
+    def handle_category_correction(
+        self, telegram_user_id: int, transaction_id: str, new_category: str
+    ) -> dict:
+        tx = self.transaction_service.update_category(
+            telegram_user_id, transaction_id, new_category
+        )
+        if tx is None:
+            return {"message": "Транзакция не найдена."}
+        if tx.description:
+            keyword = _extract_keyword(tx.description)
+            if keyword:
+                YamlLearnerService().add_synonym(new_category, keyword)
+        return {"message": f"✅ Категория изменена на <b>{new_category}</b>"}
+
+    def improve_categories(self, telegram_user_id: int) -> list[dict]:
+        import uuid
+        from app.services.category_suggestion_service import CategorySuggestionService, AddSynonymSuggestion
+
+        service = CategorySuggestionService(self.db)
+        suggestions = service.get_suggestions(telegram_user_id)
+
+        results = []
+        for sugg in suggestions:
+            key = f"sugg:{uuid.uuid4().hex[:8]}"
+            if isinstance(sugg, AddSynonymSuggestion):
+                text = f"Добавить <b>'{sugg.synonym}'</b> как синоним категории <i>{sugg.category_slug}</i>?"
+            else:
+                syns = ", ".join(sugg.synonyms)
+                text = f"Создать новую категорию <b>'{sugg.slug}'</b> ({syns})?"
+            results.append({"text": text, "key": key, "suggestion": sugg})
+        return results
+
+    def apply_suggestion(self, suggestion) -> bool:
+        from app.services.category_suggestion_service import AddSynonymSuggestion
+        svc = YamlLearnerService()
+        if isinstance(suggestion, AddSynonymSuggestion):
+            return svc.add_synonym(suggestion.category_slug, suggestion.synonym)
+        else:
+            return svc.add_category(suggestion.slug, suggestion.tx_type, suggestion.synonyms)

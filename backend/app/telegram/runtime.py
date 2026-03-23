@@ -1,9 +1,10 @@
+import asyncio
 import logging
 import os
 from pathlib import Path
 import tempfile
 
-from telegram import ReplyKeyboardRemove, Update
+from telegram import Update
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -21,17 +22,30 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.user_category_mapping_repository import UserCategoryMappingRepository
 from app.schemas.telegram import TelegramVoicePayload
 from app.services.analytics_service import AnalyticsService
+from app.services.nav_service import NavService
+from app.services.recurring_service import RecurringService, parse_recurring_args
 from app.services.scheduler_service import SchedulerService
 from app.telegram.bot_service import TelegramBotService
 from app.telegram.formatter import TreasuryFormatter
 from app.telegram.handlers import START_MESSAGE
 from app.telegram.keyboards import (
+    category_grid_keyboard,
+    category_resolution_keyboard,
     delete_all_confirm_keyboard,
     delete_keyboard,
-    category_resolution_keyboard,
+    edit_categories_keyboard,
+    edit_item_keyboard,
+    edit_select_keyboard,
+    evening_checkin_amount_keyboard,
     evening_checkin_keyboard,
+    low_confidence_category_keyboard,
+    low_confidence_keyboard,
+    main_menu_inline_keyboard,
+    saved_actions_keyboard,
     settings_keyboard,
     start_keyboard,
+    suggestion_keyboard,
+    undo_inline_keyboard,
     voice_confirmation_keyboard,
 )
 
@@ -44,17 +58,18 @@ formatter = TreasuryFormatter()
 # Global scheduler reference (set during startup)
 _scheduler: SchedulerService | None = None
 
+# Undo window — 30 seconds
+UNDO_WINDOW_SECONDS = 30
+
 
 def configure_logging() -> None:
     if logger.handlers:
         return
-
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
     file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
     file_handler.setFormatter(fmt)
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(fmt)
-
     logging.basicConfig(level=logging.INFO, handlers=[file_handler, stream_handler], force=True)
     logger.setLevel(logging.INFO)
     logger.info("logging configured, path=%s", LOG_PATH)
@@ -81,7 +96,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def _ensure_user(db, update: Update) -> None:
-    """Ensure user exists in DB and update activity tracking."""
     tg_user = update.effective_user
     if tg_user is None:
         return
@@ -89,7 +103,6 @@ def _ensure_user(db, update: Update) -> None:
     display_name = tg_user.full_name or tg_user.username
     user = user_repo.get_or_create(tg_user.id, display_name)
 
-    # Update streak and daily counter
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
     try:
@@ -99,11 +112,118 @@ def _ensure_user(db, update: Update) -> None:
     today_str = datetime.now(tz).date().isoformat()
     user_repo.update_streak(user, today_str)
 
-    # Reset ignored evening reminders on any user activity
     if user.ignored_evening_reminders > 0:
         user_repo.reset_ignored_evening_reminders(user)
 
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# catfix callback — catfix:change / catfix:set / catfix:cancel
+# ---------------------------------------------------------------------------
+
+_CATFIX_CATEGORIES = [
+    "food", "transport", "housing", "health", "beauty", "entertainment",
+    "subscriptions", "shopping", "home", "telecom", "work", "education",
+    "gifts", "fees", "salary", "freelance", "bonus", "transfer", "refund",
+    "other_income", "other",
+]
+
+
+async def catfix_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    # catfix:change:<tx_id>
+    # catfix:set:<tx_id>:<slug>
+    # catfix:cancel:<tx_id>
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    tx_id  = parts[2] if len(parts) > 2 else ""
+
+    if action == "cancel":
+        await query.edit_message_reply_markup(reply_markup=None)
+        return
+
+    if action == "change":
+        await query.edit_message_reply_markup(
+            reply_markup=category_grid_keyboard(tx_id, _CATFIX_CATEGORIES)
+        )
+        return
+
+    if action == "set":
+        slug = parts[3] if len(parts) > 3 else ""
+        user_id = update.effective_user.id
+        with SessionLocal() as db:
+            svc = TelegramBotService(db)
+            result = svc.handle_category_correction(user_id, tx_id, slug)
+        await query.edit_message_text(result["message"], parse_mode="HTML")
+        return
+
+    await query.edit_message_reply_markup(reply_markup=None)
+
+
+# ---------------------------------------------------------------------------
+# /improve_categories command + sugg callback
+# ---------------------------------------------------------------------------
+
+async def improve_categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.telegram.handlers import _sugg_set
+    await update.effective_message.reply_text("Анализирую транзакции…")
+    try:
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = TelegramBotService(db)
+            results = svc.improve_categories(update.effective_user.id)
+    except Exception as exc:
+        await update.effective_message.reply_text(f"Ошибка при анализе: {exc}")
+        return
+
+    if not results:
+        await update.effective_message.reply_text("Предложений нет.")
+        return
+
+    for item in results:
+        _sugg_set(item["key"], item["suggestion"])
+        await update.effective_message.reply_text(
+            item["text"],
+            parse_mode="HTML",
+            reply_markup=suggestion_keyboard(item["key"]),
+        )
+
+
+async def sugg_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.telegram.handlers import _sugg_pop
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    data = query.data          # e.g. "sugg:abc12345_yes"
+    key = data.rsplit("_", 1)[0]
+    action = data.rsplit("_", 1)[1] if "_" in data else ""
+
+    suggestion = _sugg_pop(key)
+    if suggestion is None:
+        await query.edit_message_reply_markup(reply_markup=None)
+        return
+
+    if action == "no":
+        await query.edit_message_reply_markup(reply_markup=None)
+        return
+
+    with SessionLocal() as db:
+        svc = TelegramBotService(db)
+        svc.apply_suggestion(suggestion)
+    await query.edit_message_reply_markup(reply_markup=None)
 
 
 def build_application() -> Application:
@@ -126,23 +246,65 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("deleteall", deleteall_command))
     application.add_handler(CommandHandler("settings", settings_command))
     application.add_handler(CommandHandler("budget", budget_command))
+    application.add_handler(CommandHandler("recurring", recurring_command))
+    application.add_handler(CommandHandler("recurring_del", recurring_del_command))
+    application.add_handler(CommandHandler("menu", menu_command))
+    application.add_handler(CommandHandler("edit", edit_command))
+    application.add_handler(CommandHandler("export", export_command))
+    application.add_handler(CommandHandler("improve_categories", improve_categories_command))
+    application.add_handler(CallbackQueryHandler(edit_callback_handler,    pattern=r"^edit:"))
+    application.add_handler(CallbackQueryHandler(nav_callback_handler,     pattern=r"^nav:"))
+    application.add_handler(CallbackQueryHandler(checkin_callback_handler, pattern=r"^checkin:"))
+    application.add_handler(CallbackQueryHandler(undo_callback_handler,    pattern=r"^undo:"))
     application.add_handler(CallbackQueryHandler(settings_callback_handler, pattern=r"^settings:"))
-    application.add_handler(CallbackQueryHandler(delete_callback_handler, pattern=r"^(delete:|deleteall:)"))
-    application.add_handler(CallbackQueryHandler(voice_callback_handler, pattern=r"^voice:"))
+    application.add_handler(CallbackQueryHandler(delete_callback_handler,  pattern=r"^(delete:|deleteall:)"))
+    application.add_handler(CallbackQueryHandler(voice_callback_handler,   pattern=r"^voice:"))
+    application.add_handler(CallbackQueryHandler(catres_callback_handler,  pattern=r"^catres:"))
+    application.add_handler(CallbackQueryHandler(lowconf_callback_handler, pattern=r"^lowconf:"))
+    application.add_handler(CallbackQueryHandler(catfix_callback_handler,  pattern=r"^catfix:"))
+    application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     return application
 
+
+# ---------------------------------------------------------------------------
+# /start — single message
+# ---------------------------------------------------------------------------
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with SessionLocal() as db:
         _ensure_user(db, update)
 
     settings = get_settings()
-    reply_markup = start_keyboard(settings.telegram_webhook_url or None)
-    kwargs = {"reply_markup": reply_markup} if reply_markup else {"reply_markup": ReplyKeyboardRemove()}
-    await update.effective_message.reply_text(START_MESSAGE, **kwargs)
+    webapp_kb = start_keyboard(settings.telegram_webhook_url or None)
 
+    # Single message: greeting + menu inline buttons
+    await update.effective_message.reply_text(
+        START_MESSAGE,
+        reply_markup=webapp_kb or main_menu_inline_keyboard(),
+        parse_mode="HTML",
+    )
+    # If WebApp button exists, also show the nav menu
+    if webapp_kb:
+        await update.effective_message.reply_text(
+            formatter.format_main_menu_screen(),
+            reply_markup=main_menu_inline_keyboard(),
+        )
+
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+    await update.effective_message.reply_text(
+        formatter.format_main_menu_screen(),
+        reply_markup=main_menu_inline_keyboard(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# /summary
+# ---------------------------------------------------------------------------
 
 async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     period = "month"
@@ -155,8 +317,12 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _ensure_user(db, update)
         service = TelegramBotService(db)
         response = service.process_summary_command(update.effective_user.id, period=period)
-    await update.effective_message.reply_text(response["message"], reply_markup=ReplyKeyboardRemove())
+    await update.effective_message.reply_text(response["message"])
 
+
+# ---------------------------------------------------------------------------
+# /delete / /deleteall
+# ---------------------------------------------------------------------------
 
 async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with SessionLocal() as db:
@@ -170,7 +336,7 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             reply_markup=delete_keyboard(response["items"]),
         )
         return
-    await update.effective_message.reply_text(response["message"], reply_markup=ReplyKeyboardRemove())
+    await update.effective_message.reply_text(response["message"])
 
 
 async def deleteall_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -185,6 +351,10 @@ async def deleteall_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+# ---------------------------------------------------------------------------
+# /settings
+# ---------------------------------------------------------------------------
+
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with SessionLocal() as db:
         _ensure_user(db, update)
@@ -196,13 +366,13 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     lines = [
-        "\u2699\ufe0f Настройки\n",
-        f"\U0001f4b0 Бюджет: {f'{user.budget_amount:,.0f} ₽/мес' if user.budget_amount else 'не установлен'}",
-        f"\U0001f4c5 Начало периода: {user.budget_start_day}-е число",
-        f"\u23f0 Утреннее напоминание: {user.reminder_morning or 'выключено'}",
-        f"\U0001f319 Вечернее напоминание: {user.reminder_evening or 'выключено'}",
-        f"\U0001f30d Часовой пояс: {user.timezone}",
-        f"\U0001f525 Серия: {user.streak_days} дней",
+        "⚙️ Настройки\n",
+        f"💰 Бюджет: {f'{user.budget_amount:,.0f} ₽/мес' if user.budget_amount else 'не установлен'}",
+        f"📅 Начало периода: {user.budget_start_day}-е число",
+        f"⏰ Утреннее напоминание: {user.reminder_morning or 'выключено'}",
+        f"🌙 Вечернее напоминание: {user.reminder_evening or 'выключено'}",
+        f"🌍 Часовой пояс: {user.timezone}",
+        f"🔥 Серия: {user.streak_days} дней",
     ]
     await update.effective_message.reply_text(
         "\n".join(lines),
@@ -210,8 +380,555 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
+# ---------------------------------------------------------------------------
+# /edit
+# ---------------------------------------------------------------------------
+
+async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        from app.services.transaction_service import TransactionService
+        svc = TransactionService(db)
+        items = svc.list_recent_for_delete(update.effective_user.id, limit=5)
+
+    if not items:
+        await update.effective_message.reply_text("Записей для редактирования нет.")
+        return
+
+    await update.effective_message.reply_text(
+        "✏️ Выбери запись для редактирования:",
+        reply_markup=edit_select_keyboard(items),
+    )
+
+
+async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    tx_id  = parts[2] if len(parts) > 2 else ""
+    extra  = parts[3] if len(parts) > 3 else ""
+    user_id = update.effective_user.id
+
+    if action == "select":
+        with SessionLocal() as db:
+            from app.services.transaction_service import TransactionService
+            svc = TransactionService(db)
+            items = svc.list_recent_for_delete(user_id, limit=5)
+        if not items:
+            await query.edit_message_text("Записей нет.")
+            return
+        await query.edit_message_text(
+            "✏️ Выбери запись для редактирования:",
+            reply_markup=edit_select_keyboard(items),
+        )
+        return
+
+    if action == "item":
+        with SessionLocal() as db:
+            from app.services.transaction_service import TransactionService
+            svc = TransactionService(db)
+            items = svc.list_recent_for_delete(user_id, limit=20)
+            tx = next((i for i in items if i["id"] == tx_id), None)
+        if tx is None:
+            await query.edit_message_text("Запись не найдена.")
+            return
+        sign  = "↗" if tx["type"] == "income" else "↘"
+        label = formatter.category_label(tx["category"])
+        text  = f"✏️ {sign} {tx['amount']} ₽ — {label}\n\nЧто изменить?"
+        await query.edit_message_text(text, reply_markup=edit_item_keyboard(tx_id))
+        return
+
+    if action == "del":
+        with SessionLocal() as db:
+            from uuid import UUID
+            from app.services.transaction_service import TransactionService
+            svc = TransactionService(db)
+            deleted = svc.delete_transaction(user_id, UUID(tx_id))
+        if deleted:
+            await query.edit_message_text("🗑 Запись удалена.")
+        else:
+            await query.edit_message_text("Запись не найдена или уже удалена.")
+        return
+
+    if action == "type":
+        with SessionLocal() as db:
+            from uuid import UUID
+            from app.services.transaction_service import TransactionService
+            from app.schemas.transaction import TransactionUpdateRequest
+            svc = TransactionService(db)
+            items = svc.list_recent_for_delete(user_id, limit=20)
+            tx = next((i for i in items if i["id"] == tx_id), None)
+            if tx is None:
+                await query.edit_message_text("Запись не найдена.")
+                return
+            new_type = "income" if tx["type"] == "expense" else "expense"
+            svc.update_transaction(user_id, UUID(tx_id), TransactionUpdateRequest(type=new_type))
+        type_label = "↗ доход" if new_type == "income" else "↘ расход"
+        await query.edit_message_text(
+            f"Тип изменён: {type_label} ✅",
+            reply_markup=edit_item_keyboard(tx_id),
+        )
+        return
+
+    if action == "amount":
+        if context.user_data is not None:
+            context.user_data["awaiting_edit"] = {
+                "field": "amount", "tx_id": tx_id,
+                "chat_id": query.message.chat_id,
+                "message_id": query.message.message_id,
+            }
+        await query.edit_message_text("✏️ Введи новую сумму (например: 750 или 1200.50):")
+        return
+
+    if action == "cat":
+        if extra:
+            with SessionLocal() as db:
+                from uuid import UUID
+                from app.services.transaction_service import TransactionService
+                from app.schemas.transaction import TransactionUpdateRequest
+                svc = TransactionService(db)
+                svc.update_transaction(user_id, UUID(tx_id), TransactionUpdateRequest(category=extra))
+            cat_label = formatter.category_label(extra)
+            await query.edit_message_text(
+                f"Категория изменена: {cat_label} ✅",
+                reply_markup=edit_item_keyboard(tx_id),
+            )
+        else:
+            await query.edit_message_text(
+                "Выбери категорию:",
+                reply_markup=edit_categories_keyboard(tx_id),
+            )
+        return
+
+
+# ---------------------------------------------------------------------------
+# /export
+# ---------------------------------------------------------------------------
+
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    import io
+    import csv
+
+    period = "month"
+    if context.args:
+        candidate = context.args[0].strip().lower()
+        if candidate in ("today", "week", "month", "all"):
+            period = candidate
+
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        from app.services.transaction_service import TransactionService
+        svc = TransactionService(db)
+        items = svc.list_transactions(update.effective_user.id, limit=1000, offset=0, period=period)
+
+    if not items:
+        period_label = {"today": "сегодня", "week": "за неделю", "month": "за месяц", "all": "за всё время"}.get(period, period)
+        await update.effective_message.reply_text(f"Записей {period_label} нет.")
+        return
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Дата", "Тип", "Сумма", "Категория", "Описание", "Источник"])
+    for item in items:
+        date_str = item.created_at[:10] if item.created_at else ""
+        type_label = "Доход" if item.type == "income" else "Расход"
+        category_label = formatter.category_label(item.category)
+        writer.writerow([date_str, type_label, item.amount, category_label, item.description or "", item.source])
+
+    period_names = {"today": "сегодня", "week": "неделю", "month": "месяц", "all": "всё время"}
+    period_filename = {"today": "today", "week": "week", "month": "month", "all": "all"}.get(period, period)
+    filename = f"finance_{period_filename}.csv"
+
+    from telegram import InputFile
+    csv_bytes = buf.getvalue().encode("utf-8-sig")
+    await update.effective_message.reply_document(
+        document=InputFile(io.BytesIO(csv_bytes), filename=filename),
+        caption=f"📊 Экспорт за {period_names.get(period, period)}: {len(items)} записей",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Undo
+# ---------------------------------------------------------------------------
+
+async def _auto_remove_keyboard(bot, chat_id: int, message_id: int, delay: float = UNDO_WINDOW_SECONDS) -> None:
+    await asyncio.sleep(delay)
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=None,
+        )
+    except Exception:
+        pass
+
+
+async def _send_saved_with_undo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    transaction_ids: list[str],
+    correction_tx_id: str | None = None,
+) -> None:
+    if correction_tx_id is not None:
+        keyboard = saved_actions_keyboard(correction_tx_id)
+    else:
+        keyboard = undo_inline_keyboard(transaction_ids)
+    msg = await update.effective_message.reply_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+    asyncio.create_task(
+        _auto_remove_keyboard(context.bot, msg.chat_id, msg.message_id)
+    )
+
+
+async def undo_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    ids_str = query.data.split(":", 1)[1] if ":" in query.data else ""
+    transaction_ids = [tid.strip() for tid in ids_str.split(",") if tid.strip()]
+
+    if not transaction_ids:
+        await query.edit_message_text("❌ Не удалось отменить: ID не найден.")
+        return
+
+    deleted_count = 0
+    with SessionLocal() as db:
+        from uuid import UUID
+        from app.services.transaction_service import TransactionService
+        svc = TransactionService(db)
+        for tid in transaction_ids:
+            try:
+                if svc.delete_transaction(update.effective_user.id, UUID(tid)):
+                    deleted_count += 1
+            except Exception:
+                pass
+
+    if deleted_count > 0:
+        suffix = f" ({deleted_count} записи)" if deleted_count > 1 else ""
+        await query.edit_message_text(f"↩ Отменено{suffix}.")
+    else:
+        await query.edit_message_text("Запись уже была удалена или не найдена.")
+
+
+# ---------------------------------------------------------------------------
+# Category resolution callback — catres:*
+# ---------------------------------------------------------------------------
+
+async def catres_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle inline category resolution buttons (replaces Reply keyboard)."""
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    parts = query.data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    payload = parts[2] if len(parts) > 2 else ""
+    user_id = update.effective_user.id
+
+    with SessionLocal() as db:
+        from app.telegram.handlers import TelegramTextFlow, _store_get, _store_pop, _store_set, PendingCategoryResolution
+        from app.services.parser_service import ParserService
+        _ensure_user(db, update)
+        flow = TelegramTextFlow(db)
+
+        pending = _store_get(user_id)
+        if pending is None:
+            await query.edit_message_text("Сессия истекла. Отправь запись заново.")
+            return
+
+        if action == "cancel":
+            _store_pop(user_id)
+            await query.edit_message_text("Запись отменена.")
+            return
+
+        if action == "use":
+            # payload = category slug
+            category = payload
+            result = flow._save_from_pending(user_id, pending, category, remove_keyboard=False)
+            db.commit()
+            await query.edit_message_text(result["message"], parse_mode="HTML")
+            if result.get("saved_transaction_id"):
+                await _send_saved_with_undo(
+                    update, context, result["message"], [result["saved_transaction_id"]]
+                )
+            return
+
+        if action == "create":
+            # payload = raw_category name
+            result = flow._save_from_pending(user_id, payload, pending, payload, remove_keyboard=False)
+            db.commit()
+            await query.edit_message_text(result["message"], parse_mode="HTML")
+            if result.get("saved_transaction_id"):
+                await _send_saved_with_undo(
+                    update, context, result["message"], [result["saved_transaction_id"]]
+                )
+            return
+
+    await query.edit_message_text("Не удалось обработать выбор.")
+
+
+# ---------------------------------------------------------------------------
+# Low confidence callback — lowconf:*
+# ---------------------------------------------------------------------------
+
+async def lowconf_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle low-confidence inline buttons (type and category selection)."""
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    # lowconf:cancel
+    # lowconf:expense:<amount>  or  lowconf:income:<amount>
+    # lowconf:cat:<type>:<amount>:<slug>
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "cancel":
+        await query.edit_message_text("Запись отменена.")
+        return
+
+    if action in ("expense", "income"):
+        # User chose type — now show category keyboard
+        amount = parts[2] if len(parts) > 2 else "0"
+        await query.edit_message_text(
+            f"{'↘ Расход' if action == 'expense' else '↗ Доход'} {amount} ₽ — выбери категорию:",
+            reply_markup=low_confidence_category_keyboard(action, amount),
+        )
+        return
+
+    if action == "cat":
+        # lowconf:cat:<type>:<amount>:<slug>
+        tx_type = parts[2] if len(parts) > 2 else "expense"
+        amount  = parts[3] if len(parts) > 3 else "0"
+        slug    = parts[4] if len(parts) > 4 else "other"
+        user_id = update.effective_user.id
+
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            from decimal import Decimal
+            from app.schemas.parser import ParseResult
+            from app.services.transaction_service import TransactionService
+            svc = TransactionService(db)
+            parsed = ParseResult(
+                matched=True,
+                confidence=0.7,
+                confidence_label="medium",
+                transaction_type=tx_type,
+                amount=Decimal(amount),
+                category=slug,
+                description=None,
+                pattern="manual",
+                raw_input=f"{tx_type} {amount} {slug}",
+            )
+            item = svc.create_from_parse(telegram_user_id=user_id, source="text", parsed=parsed)
+            summary = svc.get_summary(telegram_user_id=user_id, period="month")
+            db.commit()
+
+        operation_label = "доход" if tx_type == "income" else "расход"
+        balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
+        msg = formatter.format_saved(operation_label, str(item.amount), item.category, balance)
+        await query.edit_message_text(msg, parse_mode="HTML")
+        await _send_saved_with_undo(update, context, msg, [str(item.id)])
+        return
+
+    await query.edit_message_text("Не удалось обработать выбор.")
+
+
+# ---------------------------------------------------------------------------
+# Evening check-in callback — checkin:*
+# ---------------------------------------------------------------------------
+
+async def checkin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "none":
+        await query.edit_message_text("👍 Хорошо, пустой день.")
+        return
+
+    if action == "cat" and len(parts) > 2:
+        cat_slug = parts[2]
+        cat_label = formatter.category_label(cat_slug)
+        # Show quick amount buttons
+        await query.edit_message_text(
+            f"{cat_label} — выбери сумму:",
+            reply_markup=evening_checkin_amount_keyboard(cat_slug),
+        )
+        return
+
+    if action == "amount" and len(parts) > 3:
+        # checkin:amount:<category>:<amount>
+        cat_slug = parts[2]
+        amount   = parts[3]
+        user_id  = update.effective_user.id
+
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            from decimal import Decimal
+            from app.schemas.parser import ParseResult
+            from app.services.transaction_service import TransactionService
+            svc = TransactionService(db)
+            parsed = ParseResult(
+                matched=True,
+                confidence=0.9,
+                confidence_label="high",
+                transaction_type="expense",
+                amount=Decimal(amount),
+                category=cat_slug,
+                description=None,
+                pattern="checkin",
+                raw_input=f"checkin {amount} {cat_slug}",
+            )
+            item = svc.create_from_parse(telegram_user_id=user_id, source="text", parsed=parsed)
+            summary = svc.get_summary(telegram_user_id=user_id, period="month")
+            db.commit()
+
+        balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
+        msg = formatter.format_saved("расход", str(item.amount), item.category, balance)
+        await query.edit_message_text(msg, parse_mode="HTML")
+        await _send_saved_with_undo(update, context, msg, [str(item.id)])
+        return
+
+    if action == "custom" and len(parts) > 2:
+        # User wants to enter custom amount
+        cat_slug = parts[2]
+        if context.user_data is not None:
+            context.user_data["awaiting_checkin_category"] = cat_slug
+        cat_label = formatter.category_label(cat_slug)
+        await query.edit_message_text(f"{cat_label} — введи сумму:")
+        return
+
+    await query.edit_message_text("Хорошо!")
+
+
+# ---------------------------------------------------------------------------
+# Nav callback — nav:*
+# ---------------------------------------------------------------------------
+
+async def _nav_send_or_edit(query, update: Update, screen) -> None:
+    try:
+        await query.edit_message_text(
+            screen.text,
+            reply_markup=screen.keyboard,
+            parse_mode=screen.parse_mode,
+        )
+    except BadRequest as exc:
+        logger.debug("nav edit failed (%s), sending new message", exc)
+        await update.effective_chat.send_message(
+            screen.text,
+            reply_markup=screen.keyboard,
+            parse_mode=screen.parse_mode,
+        )
+
+
+async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    data = query.data
+    parts = data.split(":")
+    section = parts[1] if len(parts) > 1 else ""
+    sub     = parts[2] if len(parts) > 2 else ""
+    extra   = parts[3] if len(parts) > 3 else ""
+    user_id = update.effective_user.id
+
+    with SessionLocal() as db:
+        nav = NavService(db)
+
+        if section == "balance":
+            period = sub if sub in ("today", "week", "month", "all") else "month"
+            screen = nav.balance_screen(user_id, period)
+        elif section == "stats":
+            period = sub if sub in ("today", "week", "month", "all") else "month"
+            screen = nav.stats_screen(user_id, period)
+        elif section == "ops":
+            if sub in ("today", "week", "month", "all"):
+                screen = nav.operations_screen(user_id, sub)
+            elif sub == "delete_mode":
+                period = extra if extra in ("today", "week", "month", "all") else "month"
+                screen = nav.operations_delete_screen(user_id, period)
+            elif sub == "del" and extra:
+                uuid_str = extra
+                period_after = parts[4] if len(parts) > 4 else "month"
+                from uuid import UUID
+                from app.services.transaction_service import TransactionService
+                tx_svc = TransactionService(db)
+                tx_svc.delete_transaction(user_id, UUID(uuid_str))
+                screen = nav.operations_screen(user_id, period_after)
+            else:
+                screen = nav.operations_screen(user_id, "month")
+        elif section == "cats":
+            if sub == "income":
+                screen = nav.categories_type_screen(user_id, "income")
+            elif sub == "expense":
+                screen = nav.categories_type_screen(user_id, "expense")
+            else:
+                screen = nav.categories_screen()
+        elif section == "settings":
+            screen = nav.settings_screen(user_id)
+        elif section == "help":
+            screen = nav.help_screen()
+        elif section == "menu":
+            try:
+                await query.edit_message_text(
+                    formatter.format_main_menu_screen(),
+                    reply_markup=main_menu_inline_keyboard(),
+                )
+            except BadRequest:
+                await update.effective_chat.send_message(
+                    formatter.format_main_menu_screen(),
+                    reply_markup=main_menu_inline_keyboard(),
+                )
+            return
+        else:
+            logger.warning("unknown nav section: %s", section)
+            return
+
+    await _nav_send_or_edit(query, update, screen)
+
+
+# ---------------------------------------------------------------------------
+# /budget
+# ---------------------------------------------------------------------------
+
 async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /budget command. Usage: /budget [category] [amount] or /budget (show all)."""
     with SessionLocal() as db:
         _ensure_user(db, update)
         user_repo = UserRepository(db)
@@ -222,10 +939,9 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         if not context.args or len(context.args) == 0:
-            # Show budget report
             analytics = AnalyticsService(db)
             report = analytics.build_budget_report(user)
-            await update.effective_message.reply_text(report, reply_markup=ReplyKeyboardRemove())
+            await update.effective_message.reply_text(report)
             return
 
         if len(context.args) < 2:
@@ -236,26 +952,19 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "  /budget транспорт 5000\n"
                 "  /budget еда 0  (удалить бюджет)\n"
                 "  /budget  (показать все бюджеты)",
-                reply_markup=ReplyKeyboardRemove(),
             )
             return
 
-        # Parse category and amount
         from app.services.parser_service import ParserService
         parser = ParserService()
         category_text = " ".join(context.args[:-1]).lower().strip()
         amount_text = context.args[-1]
-
-        # Resolve category
         resolved_category = parser.category_lookup.get(category_text, category_text)
 
         try:
             amount = float(amount_text.replace(",", ".").replace(" ", ""))
         except ValueError:
-            await update.effective_message.reply_text(
-                f"\u274c Не понял сумму: {amount_text}. Введи число.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
+            await update.effective_message.reply_text(f"❌ Не понял сумму: {amount_text}. Введи число.")
             return
 
         budget_repo = CategoryBudgetRepository(db)
@@ -265,34 +974,84 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             removed = budget_repo.remove(user.telegram_user_id, resolved_category)
             db.commit()
             if removed:
-                await update.effective_message.reply_text(
-                    f"\u2705 Бюджет \u00ab{cat_label}\u00bb удалён.",
-                    reply_markup=ReplyKeyboardRemove(),
-                )
+                await update.effective_message.reply_text(f"✅ Бюджет «{cat_label}» удалён.")
             else:
-                await update.effective_message.reply_text(
-                    f"Бюджет \u00ab{cat_label}\u00bb не был установлен.",
-                    reply_markup=ReplyKeyboardRemove(),
-                )
+                await update.effective_message.reply_text(f"Бюджет «{cat_label}» не был установлен.")
             return
 
         budget_repo.upsert(user.telegram_user_id, resolved_category, amount)
         db.commit()
-        await update.effective_message.reply_text(
-            f"\u2705 Бюджет \u00ab{cat_label}\u00bb: {amount:,.0f} \u20bd/мес",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        await update.effective_message.reply_text(f"✅ Бюджет «{cat_label}»: {amount:,.0f} ₽/мес")
 
 
 async def _check_and_send_budget_alert(
     update: Update, db, telegram_user_id: int, category: str
 ) -> None:
-    """Check if a budget alert should be sent after a transaction."""
     analytics = AnalyticsService(db)
     alert = analytics.check_budget_alert(telegram_user_id, category)
     if alert:
         await update.effective_message.reply_text(alert)
 
+
+# ---------------------------------------------------------------------------
+# /recurring
+# ---------------------------------------------------------------------------
+
+async def recurring_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        svc = RecurringService(db)
+
+        if not context.args:
+            items = svc.list_active(update.effective_user.id)
+            await update.effective_message.reply_text(svc.format_list(items))
+            return
+
+        parsed = parse_recurring_args(list(context.args))
+        if isinstance(parsed, str):
+            await update.effective_message.reply_text(parsed)
+            return
+
+        from app.services.parser_service import ParserService
+        parser = ParserService()
+        category_slug = parser.category_lookup.get(parsed["category"], parsed["category"])
+
+        rt = svc.create(
+            telegram_user_id=update.effective_user.id,
+            title=parsed["title"],
+            amount=parsed["amount"],
+            transaction_type=parsed["transaction_type"],
+            category=category_slug,
+            frequency=parsed["frequency"],
+            day_value=parsed["day_value"],
+        )
+        await update.effective_message.reply_text(svc.format_created(rt))
+
+
+async def recurring_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.effective_message.reply_text("Формат: /recurring_del <номер>\nСписок: /recurring")
+        return
+
+    try:
+        rt_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text(f"❌ Номер должен быть числом, получил: {context.args[0]}")
+        return
+
+    with SessionLocal() as db:
+        svc = RecurringService(db)
+        ok = svc.deactivate(update.effective_user.id, rt_id)
+
+    if ok:
+        await update.effective_message.reply_text(f"✅ Повторяющаяся транзакция #{rt_id} удалена.")
+    else:
+        await update.effective_message.reply_text(f"❌ Транзакция #{rt_id} не найдена.")
+
+
+# ---------------------------------------------------------------------------
+# Settings callback — settings:*
+# ---------------------------------------------------------------------------
 
 async def settings_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -308,25 +1067,25 @@ async def settings_callback_handler(update: Update, context: ContextTypes.DEFAUL
     if action == "budget":
         context.user_data["awaiting_setting"] = "budget"
         await query.edit_message_text(
-            "\U0001f4b0 Введи месячный бюджет в рублях (например: 50000).\n"
+            "💰 Введи месячный бюджет в рублях (например: 50000).\n"
             "Или отправь 0 чтобы убрать бюджет."
         )
     elif action == "morning":
         context.user_data["awaiting_setting"] = "morning"
         await query.edit_message_text(
-            "\u23f0 Введи время утреннего напоминания в формате ЧЧ:ММ (например: 09:00).\n"
+            "⏰ Введи время утреннего напоминания в формате ЧЧ:ММ (например: 09:00).\n"
             "Или отправь «выкл» чтобы отключить."
         )
     elif action == "evening":
         context.user_data["awaiting_setting"] = "evening"
         await query.edit_message_text(
-            "\U0001f319 Введи время вечернего напоминания в формате ЧЧ:ММ (например: 21:00).\n"
+            "🌙 Введи время вечернего напоминания в формате ЧЧ:ММ (например: 21:00).\n"
             "Или отправь «выкл» чтобы отключить."
         )
     elif action == "timezone":
         context.user_data["awaiting_setting"] = "timezone"
         await query.edit_message_text(
-            "\U0001f30d Введи часовой пояс (например: Europe/Moscow, Asia/Yekaterinburg, Europe/Samara).\n"
+            "🌍 Введи часовой пояс (например: Europe/Moscow, Asia/Yekaterinburg).\n"
             "Полный список: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones"
         )
     elif action == "disable_all":
@@ -336,8 +1095,12 @@ async def settings_callback_handler(update: Update, context: ContextTypes.DEFAUL
             if user:
                 user_repo.update_settings(user, reminder_morning=None, reminder_evening=None)
                 user_repo.commit()
-        await query.edit_message_text("\u2705 Все напоминания отключены. Включить обратно: /settings")
+        await query.edit_message_text("✅ Все напоминания отключены. Включить обратно: /settings")
 
+
+# ---------------------------------------------------------------------------
+# Text message handler
+# ---------------------------------------------------------------------------
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.effective_message.text or ""
@@ -347,29 +1110,89 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if awaiting:
         del context.user_data["awaiting_setting"]
         result = _handle_settings_input(update.effective_user.id, awaiting, text.strip())
-        await update.effective_message.reply_text(result, reply_markup=ReplyKeyboardRemove())
+        await update.effective_message.reply_text(result)
         return
 
-    # Handle evening check-in responses
-    stripped = text.strip()
-    if stripped == "\u2705 Не тратил":
-        await update.effective_message.reply_text(
-            "\U0001f44d Отлично, так и запишем!",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+    # Handle /edit awaiting amount input
+    awaiting_edit = context.user_data.get("awaiting_edit") if context.user_data else None
+    if awaiting_edit and awaiting_edit.get("field") == "amount":
+        del context.user_data["awaiting_edit"]
+        raw_amount = text.strip().replace(",", ".")
+        try:
+            amount = float(raw_amount)
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await update.effective_message.reply_text(
+                f"❌ Не понял сумму: {text.strip()}\nВведи число, например: 750"
+            )
+            return
+
+        tx_id = awaiting_edit["tx_id"]
+        with SessionLocal() as db:
+            from uuid import UUID
+            from app.services.transaction_service import TransactionService
+            from app.schemas.transaction import TransactionUpdateRequest
+            svc = TransactionService(db)
+            updated = svc.update_transaction(
+                update.effective_user.id, UUID(tx_id),
+                TransactionUpdateRequest(amount=f"{amount:.2f}"),
+            )
+        if updated:
+            await update.effective_message.reply_text(
+                f"✅ Сумма изменена: {amount:,.2f} ₽",
+                reply_markup=edit_item_keyboard(tx_id),
+            )
+        else:
+            await update.effective_message.reply_text("❌ Запись не найдена.")
+        return
+
+    # Handle evening check-in custom amount
+    awaiting_checkin = context.user_data.get("awaiting_checkin_category") if context.user_data else None
+    if awaiting_checkin:
+        del context.user_data["awaiting_checkin_category"]
+        raw_amount = text.strip().replace(",", ".")
+        try:
+            amount = float(raw_amount)
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 500")
+            return
+
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            from decimal import Decimal
+            from app.schemas.parser import ParseResult
+            from app.services.transaction_service import TransactionService
+            svc = TransactionService(db)
+            parsed = ParseResult(
+                matched=True,
+                confidence=0.9,
+                confidence_label="high",
+                transaction_type="expense",
+                amount=Decimal(str(amount)),
+                category=awaiting_checkin,
+                description=None,
+                pattern="checkin",
+                raw_input=f"checkin {amount} {awaiting_checkin}",
+            )
+            item = svc.create_from_parse(telegram_user_id=update.effective_user.id, source="text", parsed=parsed)
+            summary = svc.get_summary(telegram_user_id=update.effective_user.id, period="month")
+            db.commit()
+
+        balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
+        msg = formatter.format_saved("расход", str(item.amount), item.category, balance)
+        await _send_saved_with_undo(update, context, msg, [str(item.id)])
         return
 
     with SessionLocal() as db:
         _ensure_user(db, update)
-
-        # Track transaction count for smart silence
         user_repo = UserRepository(db)
         user = user_repo.get_by_telegram_id(update.effective_user.id)
-
         service = TelegramBotService(db)
         response = service.process_text_message(update.effective_user.id, text)
 
-        # If a transaction was saved, update daily counter and check budget alert
         if response.get("action") == "saved" and user:
             from datetime import datetime, timezone as tz_mod
             from zoneinfo import ZoneInfo
@@ -381,28 +1204,58 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             user_repo.increment_transactions_today(user, today_str)
             db.commit()
 
-            # Check budget alert for the saved category
             saved_category = response.get("saved_category")
             if saved_category:
                 await _check_and_send_budget_alert(update, db, user.telegram_user_id, str(saved_category))
 
-    if response.get("action") == "confirm_voice" and response.get("voice_log_id"):
+    # Route response to correct handler
+    action = response.get("action", "")
+
+    if action == "confirm_voice" and response.get("voice_log_id"):
         await update.effective_message.reply_text(
             response["message"],
             reply_markup=voice_confirmation_keyboard(response["voice_log_id"]),
+            parse_mode="HTML",
         )
         return
-    if response.get("action") == "clarify_category_choice":
+
+    if action == "clarify_category_choice":
         await update.effective_message.reply_text(
             response["message"],
-            reply_markup=category_resolution_keyboard(str(response.get("raw_category", "")), list(response.get("suggestions", []))),
+            reply_markup=category_resolution_keyboard(
+                str(response.get("raw_category", "")),
+                list(response.get("suggestions", [])),
+            ),
         )
         return
-    if response.get("remove_keyboard"):
-        await update.effective_message.reply_text(response["message"], reply_markup=ReplyKeyboardRemove())
-        return
-    await update.effective_message.reply_text(response["message"], reply_markup=ReplyKeyboardRemove())
 
+    if action == "clarify_low":
+        # Low confidence — show inline type selector
+        await update.effective_message.reply_text(
+            response["message"],
+            reply_markup=low_confidence_keyboard(str(response.get("amount", "0"))),
+        )
+        return
+
+    if action == "saved" and response.get("saved_transaction_id"):
+        tx_id_str = response["saved_transaction_id"]
+        await _send_saved_with_undo(
+            update, context,
+            response["message"],
+            [tx_id_str],
+            correction_tx_id=tx_id_str,
+        )
+        return
+
+    await update.effective_message.reply_text(
+        response["message"],
+        parse_mode="HTML",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Voice message handler
+# ---------------------------------------------------------------------------
 
 async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     voice = update.effective_message.voice
@@ -410,71 +1263,133 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text("Не нашёл voice payload.")
         return
 
-    placeholder = await update.effective_message.reply_text("\U0001f3a4 Обрабатываю голосовое\u2026", reply_markup=ReplyKeyboardRemove())
+    placeholder = await update.effective_message.reply_text("🎤 Обрабатываю голосовое…")
 
-    logger.info("voice message received: user=%s message=%s file_id=%s", update.effective_user.id, update.effective_message.message_id, voice.file_id)
+    logger.info("voice message received: user=%s file_id=%s", update.effective_user.id, voice.file_id)
     telegram_file = await context.bot.get_file(voice.file_id)
     fd, temp_path = tempfile.mkstemp(prefix="finance-bot-voice-", suffix=".ogg")
     os.close(fd)
     Path(temp_path).unlink(missing_ok=True)
     await telegram_file.download_to_drive(custom_path=temp_path)
-    logger.info("voice downloaded: path=%s", temp_path)
 
-    with SessionLocal() as db:
-        _ensure_user(db, update)
-
-        service = TelegramBotService(db)
-        response, debug = service.process_voice_message(
-            TelegramVoicePayload(
-                telegram_user_id=update.effective_user.id,
-                telegram_message_id=update.effective_message.message_id,
-                file_id=voice.file_id,
-                original_file_path=temp_path,
+    try:
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            service = TelegramBotService(db)
+            response, debug = service.process_voice_message(
+                TelegramVoicePayload(
+                    telegram_user_id=update.effective_user.id,
+                    telegram_message_id=update.effective_message.message_id,
+                    file_id=voice.file_id,
+                    original_file_path=temp_path,
+                )
             )
-        )
 
-        # Track transaction count if voice was auto-confirmed
-        if response.get("action") == "saved":
-            user_repo = UserRepository(db)
-            user = user_repo.get_by_telegram_id(update.effective_user.id)
-            if user:
-                from datetime import datetime, timezone as tz_mod
-                from zoneinfo import ZoneInfo
-                try:
-                    tz = ZoneInfo(user.timezone)
-                except Exception:
-                    tz = ZoneInfo("Europe/Moscow")
-                today_str = datetime.now(tz).date().isoformat()
-                user_repo.increment_transactions_today(user, today_str)
-                db.commit()
+            if response.get("action") == "saved":
+                user_repo = UserRepository(db)
+                user = user_repo.get_by_telegram_id(update.effective_user.id)
+                if user:
+                    from datetime import datetime, timezone as tz_mod
+                    from zoneinfo import ZoneInfo
+                    try:
+                        tz = ZoneInfo(user.timezone)
+                    except Exception:
+                        tz = ZoneInfo("Europe/Moscow")
+                    today_str = datetime.now(tz).date().isoformat()
+                    user_repo.increment_transactions_today(user, today_str)
+                    db.commit()
+    finally:
+        try:
+            Path(temp_path).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("failed to delete downloaded voice file %s: %s", temp_path, exc)
 
     logger.info("voice processed: action=%s debug=%s", response.get("action"), debug)
+
     try:
         await context.bot.delete_message(chat_id=placeholder.chat_id, message_id=placeholder.message_id)
     except BadRequest as exc:
-        logger.warning(
-            "voice placeholder delete failed: error=%s chat_id=%s message_id=%s action=%s",
-            str(exc),
-            placeholder.chat_id,
-            placeholder.message_id,
-            response.get("action"),
-        )
+        logger.warning("voice placeholder delete failed: %s", exc)
 
-    if response.get("action") == "confirm_voice" and response.get("voice_log_id"):
+    action = response.get("action", "")
+
+    if action == "confirm_voice" and response.get("voice_log_id"):
         await update.effective_message.reply_text(
             response["message"],
             reply_markup=voice_confirmation_keyboard(response["voice_log_id"]),
+            parse_mode="HTML",
         )
         return
-    if response.get("action") == "clarify_category_choice":
+
+    if action == "clarify_category_choice":
         await update.effective_message.reply_text(
             response["message"],
-            reply_markup=category_resolution_keyboard(str(response.get("raw_category", "")), list(response.get("suggestions", []))),
+            reply_markup=category_resolution_keyboard(
+                str(response.get("raw_category", "")),
+                list(response.get("suggestions", [])),
+            ),
         )
         return
 
-    await update.effective_message.reply_text(response["message"], reply_markup=ReplyKeyboardRemove())
+    await update.effective_message.reply_text(response["message"], parse_mode="HTML")
 
+
+# ---------------------------------------------------------------------------
+# Voice callback — voice:*
+# ---------------------------------------------------------------------------
+
+async def voice_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        logger.warning("callback query answer failed: data=%s", query.data)
+
+    try:
+        _, action, voice_log_id = query.data.split(":", 2)
+    except ValueError:
+        await query.edit_message_text("Некорректный callback payload.")
+        return
+
+    with SessionLocal() as db:
+        service = TelegramBotService(db)
+        if action == "confirm":
+            response = service.confirm_voice(voice_log_id)
+            if response.get("action") in ("voice_confirmed", "saved"):
+                user_repo = UserRepository(db)
+                user = user_repo.get_by_telegram_id(update.effective_user.id)
+                if user:
+                    from datetime import datetime, timezone as tz_mod
+                    from zoneinfo import ZoneInfo
+                    try:
+                        tz = ZoneInfo(user.timezone)
+                    except Exception:
+                        tz = ZoneInfo("Europe/Moscow")
+                    today_str = datetime.now(tz).date().isoformat()
+                    user_repo.increment_transactions_today(user, today_str)
+                    db.commit()
+        elif action == "cancel":
+            response = service.cancel_voice(voice_log_id)
+        elif action == "edit":
+            response = service.start_voice_edit(voice_log_id)
+        else:
+            response = {"action": "voice_fallback", "message": "Неизвестное действие."}
+
+    logger.info("voice callback: action=%s response=%s", action, response.get("action"))
+
+    tx_ids = response.get("saved_transaction_ids", [])
+    if response.get("action") == "voice_confirmed" and tx_ids:
+        await query.edit_message_text(response["message"], parse_mode="HTML")
+        await _send_saved_with_undo(update, context, response["message"], list(tx_ids))
+    else:
+        await query.edit_message_text(response["message"], parse_mode="HTML")
+
+
+# ---------------------------------------------------------------------------
+# Delete callback — delete:* / deleteall:*
+# ---------------------------------------------------------------------------
 
 async def delete_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -500,53 +1415,11 @@ async def delete_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     await query.edit_message_text(response["message"])
 
 
-async def voice_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    if query is None or query.data is None:
-        return
-    try:
-        await query.answer()
-    except BadRequest:
-        logger.warning("callback query answer failed: data=%s", query.data)
-
-    try:
-        _, action, voice_log_id = query.data.split(":", 2)
-    except ValueError:
-        await query.edit_message_text("Некорректный callback payload.")
-        return
-
-    with SessionLocal() as db:
-        service = TelegramBotService(db)
-        if action == "confirm":
-            response = service.confirm_voice(voice_log_id)
-
-            # Track transaction count on voice confirm
-            if response.get("action") in ("voice_confirmed", "saved"):
-                user_repo = UserRepository(db)
-                user = user_repo.get_by_telegram_id(update.effective_user.id)
-                if user:
-                    from datetime import datetime, timezone as tz_mod
-                    from zoneinfo import ZoneInfo
-                    try:
-                        tz = ZoneInfo(user.timezone)
-                    except Exception:
-                        tz = ZoneInfo("Europe/Moscow")
-                    today_str = datetime.now(tz).date().isoformat()
-                    user_repo.increment_transactions_today(user, today_str)
-                    db.commit()
-        elif action == "cancel":
-            response = service.cancel_voice(voice_log_id)
-        elif action == "edit":
-            response = service.start_voice_edit(voice_log_id)
-        else:
-            response = {"action": "voice_fallback", "message": "Неизвестное действие."}
-
-    logger.info("voice callback processed: action=%s response_action=%s", action, response.get("action"))
-    await query.edit_message_text(response["message"])
-
+# ---------------------------------------------------------------------------
+# Settings input helper
+# ---------------------------------------------------------------------------
 
 def _handle_settings_input(telegram_user_id: int, setting: str, value: str) -> str:
-    """Process a settings value from the user."""
     with SessionLocal() as db:
         user_repo = UserRepository(db)
         user = user_repo.get_by_telegram_id(telegram_user_id)
@@ -559,34 +1432,34 @@ def _handle_settings_input(telegram_user_id: int, setting: str, value: str) -> s
                 if amount <= 0:
                     user_repo.update_settings(user, budget_amount=None)
                     user_repo.commit()
-                    return "\u2705 Бюджет убран."
+                    return "✅ Бюджет убран."
                 user_repo.update_settings(user, budget_amount=amount)
                 user_repo.commit()
-                return f"\u2705 Бюджет установлен: {amount:,.0f} \u20bd/мес"
+                return f"✅ Бюджет установлен: {amount:,.0f} ₽/мес"
             except ValueError:
-                return "\u274c Не понял сумму. Введи число, например: 50000"
+                return "❌ Не понял сумму. Введи число, например: 50000"
 
         elif setting == "morning":
             if value.lower() in ("выкл", "off", "0", "нет"):
                 user_repo.update_settings(user, reminder_morning=None)
                 user_repo.commit()
-                return "\u2705 Утреннее напоминание отключено."
+                return "✅ Утреннее напоминание отключено."
             if _validate_time(value):
                 user_repo.update_settings(user, reminder_morning=value)
                 user_repo.commit()
-                return f"\u2705 Утреннее напоминание: {value}"
-            return "\u274c Формат: ЧЧ:ММ (например: 09:00)"
+                return f"✅ Утреннее напоминание: {value}"
+            return "❌ Формат: ЧЧ:ММ (например: 09:00)"
 
         elif setting == "evening":
             if value.lower() in ("выкл", "off", "0", "нет"):
                 user_repo.update_settings(user, reminder_evening=None)
                 user_repo.commit()
-                return "\u2705 Вечернее напоминание отключено."
+                return "✅ Вечернее напоминание отключено."
             if _validate_time(value):
                 user_repo.update_settings(user, reminder_evening=value)
                 user_repo.commit()
-                return f"\u2705 Вечернее напоминание: {value}"
-            return "\u274c Формат: ЧЧ:ММ (например: 21:00)"
+                return f"✅ Вечернее напоминание: {value}"
+            return "❌ Формат: ЧЧ:ММ (например: 21:00)"
 
         elif setting == "timezone":
             from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -594,15 +1467,14 @@ def _handle_settings_input(telegram_user_id: int, setting: str, value: str) -> s
                 ZoneInfo(value)
                 user_repo.update_settings(user, timezone=value)
                 user_repo.commit()
-                return f"\u2705 Часовой пояс: {value}"
+                return f"✅ Часовой пояс: {value}"
             except (ZoneInfoNotFoundError, KeyError):
-                return f"\u274c Неизвестный часовой пояс: {value}. Пример: Europe/Moscow"
+                return f"❌ Неизвестный часовой пояс: {value}. Пример: Europe/Moscow"
 
-    return "\u274c Неизвестная настройка."
+    return "❌ Неизвестная настройка."
 
 
 def _validate_time(value: str) -> bool:
-    """Validate HH:MM format."""
     try:
         parts = value.split(":")
         if len(parts) != 2:

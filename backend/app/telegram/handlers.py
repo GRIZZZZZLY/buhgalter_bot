@@ -61,6 +61,20 @@ def _store_pop(user_id: int) -> None:
     _pending_store.pop(user_id, None)
 
 
+# ---------------------------------------------------------------------------
+# Module-level store for /improve_categories suggestions
+# ---------------------------------------------------------------------------
+_pending_suggestions: dict = {}
+
+
+def _sugg_set(key: str, suggestion) -> None:
+    _pending_suggestions[key] = suggestion
+
+
+def _sugg_pop(key: str):
+    return _pending_suggestions.pop(key, None)
+
+
 class TelegramTextFlow:
     def __init__(self, db: Session, parser_service: ParserService | None = None) -> None:
         self.db = db
