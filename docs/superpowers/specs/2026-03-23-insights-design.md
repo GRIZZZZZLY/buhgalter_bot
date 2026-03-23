@@ -29,7 +29,7 @@ class InsightService:
         Skips if user already received an insight today (cooldown)."""
 
     def get_scheduled_insight(self, user: User) -> str | None:
-        """Called from scheduler (morning/evening). No cooldown check."""
+        """Called from scheduler (morning only). Applies same daily cooldown as get_realtime_insight."""
 ```
 
 ### `InsightFact` dataclass
@@ -192,7 +192,7 @@ if insight:
 | `backend/app/models/user.py` | Modify — add `last_insight_at` column |
 | `backend/alembic/versions/..._add_last_insight_at.py` | **Create** |
 | `backend/app/telegram/runtime.py` | Modify — call `get_realtime_insight` after save |
-| `backend/app/services/scheduler_service.py` | Modify — call `get_scheduled_insight` in morning/evening jobs |
+| `backend/app/services/scheduler_service.py` | Modify — call `get_scheduled_insight` in morning briefing only (`_check_morning_reminders`) |
 
 ---
 
