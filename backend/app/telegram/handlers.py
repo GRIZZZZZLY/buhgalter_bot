@@ -1,17 +1,24 @@
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.repositories.user_category_mapping_repository import UserCategoryMappingRepository
 from app.schemas.parser import ParseResult
+from app.services.llm_service import LLMService, LLMUnavailableError
 from app.services.parser_service import ParserService
 from app.services.transaction_service import TransactionService
 from app.services.voice_flow_service import VoiceFlowService
 from app.telegram.formatter import TreasuryFormatter
 
+logger = logging.getLogger(__name__)
 formatter = TreasuryFormatter()
 START_MESSAGE = formatter.format_start()
+
+# How long (seconds) a pending category resolution is kept before being discarded.
+_PENDING_TTL_SECONDS = 600  # 10 minutes
 
 
 @dataclass(slots=True)
@@ -20,22 +27,53 @@ class PendingCategoryResolution:
     raw_category: str
     suggestions: list[str]
     source: str = "text"
+    override_date: "date | None" = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ---------------------------------------------------------------------------
+# Module-level shared store: user_id → PendingCategoryResolution
+# This is intentionally a module-level dict (not a class variable) so that
+# all TelegramTextFlow instances share the same state — matching the single
+# python-telegram-bot process model — while remaining easy to clear in tests.
+# ---------------------------------------------------------------------------
+_pending_store: dict[int, PendingCategoryResolution] = {}
+
+
+def _store_get(user_id: int) -> "PendingCategoryResolution | None":
+    """Return pending resolution for user, or None if absent / expired."""
+    entry = _pending_store.get(user_id)
+    if entry is None:
+        return None
+    age = (datetime.now(timezone.utc) - entry.created_at).total_seconds()
+    if age > _PENDING_TTL_SECONDS:
+        logger.debug("pending category resolution expired for user_id=%s (age=%.0fs)", user_id, age)
+        _pending_store.pop(user_id, None)
+        return None
+    return entry
+
+
+def _store_set(user_id: int, entry: "PendingCategoryResolution") -> None:
+    _pending_store[user_id] = entry
+
+
+def _store_pop(user_id: int) -> None:
+    _pending_store.pop(user_id, None)
 
 
 class TelegramTextFlow:
-    _pending_category_resolutions: dict[int, PendingCategoryResolution] = {}
-
     def __init__(self, db: Session, parser_service: ParserService | None = None) -> None:
         self.db = db
         self.parser_service = parser_service or ParserService()
         self.transaction_service = TransactionService(db)
         self.voice_flow_service = VoiceFlowService(db, parser_service=self.parser_service)
         self.mapping_repo = UserCategoryMappingRepository(db)
+        self.llm_service = LLMService(db)
 
     def handle_text(self, telegram_user_id: int, text: str) -> dict[str, object]:
         normalized_text = self._normalize_incoming_text(text)
 
-        pending_resolution = self._pending_category_resolutions.get(telegram_user_id)
+        pending_resolution = _store_get(telegram_user_id)
         if pending_resolution is not None:
             resolved = self._handle_pending_category_resolution(telegram_user_id, normalized_text, pending_resolution)
             if resolved is not None:
@@ -48,101 +86,47 @@ class TelegramTextFlow:
                 payload["voice_log_id"] = str(voice_edit.voice_log_id)
             return payload
 
-        parsed = self.parser_service.parse(normalized_text)
-        if parsed.confidence_label == "high":
-            category_fragment = self.parser_service.extract_category_fragment(normalized_text)
-            suggestions = self.parser_service.suggest_categories(category_fragment)
-            if suggestions and category_fragment and category_fragment not in self.parser_service.category_lookup:
-                normalized_category = self.parser_service.normalize_category_candidate(category_fragment)
+        # LLM processing
+        try:
+            llm_result = self.llm_service.process(normalized_text, telegram_user_id)
+        except LLMUnavailableError:
+            return {"action": "fallback", "message": "Сервис временно недоступен, попробуй позже."}
 
-                # Check user's learned category mappings before asking
-                learned = self._check_learned_mapping(telegram_user_id, normalized_category)
-                if learned is not None:
-                    parsed_with_category = ParseResult(
-                        matched=True,
-                        confidence=parsed.confidence,
-                        confidence_label="high",
-                        transaction_type=parsed.transaction_type,
-                        amount=parsed.amount,
-                        category=learned,
-                        description=normalized_category,
-                        pattern=parsed.pattern,
-                        raw_input=parsed.raw_input,
-                    )
-                    item = self.transaction_service.create_from_parse(
-                        telegram_user_id=telegram_user_id, source="text", parsed=parsed_with_category,
-                    )
-                    self.mapping_repo.upsert(telegram_user_id, normalized_category, learned)
-                    self.db.commit()
-                    summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
-                    operation_label = "доход" if item.type == "income" else "расход"
-                    return {
-                        "action": "saved",
-                        "message": formatter.format_saved(operation_label, item.amount, item.category, self._signed(summary.balance)),
-                        "saved_category": item.category,
-                    }
+        if llm_result.intent == "advisor":
+            return {"action": "advisor", "message": llm_result.answer}
 
-                return self._set_pending_category_resolution(telegram_user_id, parsed, normalized_category, suggestions, source="text")
-
-            item = self.transaction_service.create_from_parse(
+        # Save transaction(s)
+        saved_items: list[dict[str, str]] = []
+        last_tx = None
+        for llm_item in llm_result.items:
+            tx = self.transaction_service.create_from_parse(
                 telegram_user_id=telegram_user_id,
                 source="text",
-                parsed=parsed,
+                parsed=llm_item.parsed,
+                override_date=llm_item.override_date,
             )
-            summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
-            operation_label = "доход" if item.type == "income" else "расход"
+            saved_items.append({
+                "type": "доход" if tx.type == "income" else "расход",
+                "amount": str(tx.amount),
+                "category": tx.category,
+            })
+            last_tx = tx
+
+        summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
+        balance = self._signed(summary.balance)
+
+        if len(saved_items) == 1 and last_tx is not None:
+            operation_label = saved_items[0]["type"]
             return {
                 "action": "saved",
-                "message": formatter.format_saved(operation_label, item.amount, item.category, self._signed(summary.balance)),
-                "saved_category": item.category,
+                "message": formatter.format_saved(operation_label, last_tx.amount, last_tx.category, balance, None),
+                "saved_category": last_tx.category,
+                "saved_transaction_id": str(last_tx.id),
             }
-        if parsed.confidence_label == "medium":
-            raw_category = (parsed.description or "").strip()
-            normalized_raw = self.parser_service._normalize(raw_category)
-            if raw_category and normalized_raw not in self.parser_service.category_lookup:
-                normalized_category = self.parser_service.normalize_category_candidate(raw_category)
 
-                # Check user's learned category mappings before asking
-                learned = self._check_learned_mapping(telegram_user_id, normalized_category)
-                if learned is not None:
-                    parsed_with_category = ParseResult(
-                        matched=True,
-                        confidence=0.9,
-                        confidence_label="high",
-                        transaction_type=parsed.transaction_type or "expense",
-                        amount=parsed.amount,
-                        category=learned,
-                        description=normalized_category,
-                        pattern=parsed.pattern,
-                        raw_input=parsed.raw_input,
-                    )
-                    item = self.transaction_service.create_from_parse(
-                        telegram_user_id=telegram_user_id, source="text", parsed=parsed_with_category,
-                    )
-                    self.mapping_repo.upsert(telegram_user_id, normalized_category, learned)
-                    self.db.commit()
-                    summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
-                    operation_label = "доход" if item.type == "income" else "расход"
-                    return {
-                        "action": "saved",
-                        "message": formatter.format_saved(operation_label, item.amount, item.category, self._signed(summary.balance)),
-                        "saved_category": item.category,
-                    }
-
-                suggestions = self.parser_service.suggest_categories(normalized_category)
-                return self._set_pending_category_resolution(telegram_user_id, parsed, normalized_category, suggestions, source="text")
-            return {
-                "action": "clarify_category",
-                "message": formatter.format_clarify_category(str(parsed.amount), parsed.description),
-            }
-        if parsed.confidence_label == "low":
-            return {
-                "action": "clarify",
-                "message": formatter.format_clarify(str(parsed.amount)),
-            }
         return {
-            "action": "fallback",
-            "message": formatter.format_fallback(),
+            "action": "saved",
+            "message": formatter.format_saved_many(saved_items, balance),
         }
 
     def handle_summary(self, telegram_user_id: int, period: str = "month") -> dict[str, str]:
@@ -223,7 +207,7 @@ class TelegramTextFlow:
         choice_normalized = self.parser_service._normalize(choice)
 
         if choice_normalized == "отменить":
-            self._pending_category_resolutions.pop(telegram_user_id, None)
+            _store_pop(telegram_user_id)
             return {
                 "action": "category_resolution_cancelled",
                 "message": formatter.format_category_resolution_cancelled(),
@@ -232,29 +216,29 @@ class TelegramTextFlow:
 
         create_label = self.parser_service._normalize(formatter.format_create_category_option(pending.raw_category))
         if choice_normalized == create_label:
-            self._pending_category_resolutions.pop(telegram_user_id, None)
+            _store_pop(telegram_user_id)
             return self._save_from_pending(telegram_user_id, pending, pending.raw_category, remove_keyboard=True)
 
         for suggestion in pending.suggestions:
             label = self.parser_service._normalize(formatter.category_label(suggestion))
             use_label = self.parser_service._normalize(formatter.format_use_category_option(suggestion))
             if choice_normalized in {label, use_label}:
-                self._pending_category_resolutions.pop(telegram_user_id, None)
+                _store_pop(telegram_user_id)
                 return self._save_from_pending(telegram_user_id, pending, suggestion, remove_keyboard=True)
 
         if choice_normalized in self.parser_service.category_lookup:
             resolved_category = self.parser_service.category_lookup[choice_normalized]
-            self._pending_category_resolutions.pop(telegram_user_id, None)
+            _store_pop(telegram_user_id)
             return self._save_from_pending(telegram_user_id, pending, resolved_category, remove_keyboard=True)
 
         normalized_choice = self.parser_service.normalize_category_candidate(choice)
         suggestions = self.parser_service.suggest_categories(normalized_choice)
-        self._pending_category_resolutions[telegram_user_id] = PendingCategoryResolution(
+        _store_set(telegram_user_id, PendingCategoryResolution(
             parsed=pending.parsed,
             raw_category=normalized_choice,
             suggestions=suggestions,
             source=pending.source,
-        )
+        ))
         return {
             "action": "clarify_category_choice",
             "message": formatter.format_category_resolution_prompt(normalized_choice, suggestions, self.parser_service.detect_merchant_label(normalized_choice)),
@@ -269,14 +253,16 @@ class TelegramTextFlow:
         raw_category: str,
         suggestions: list[str],
         source: str,
+        override_date: "date | None" = None,
     ) -> dict[str, object]:
         pending = PendingCategoryResolution(
             parsed=parsed,
             raw_category=raw_category,
             suggestions=suggestions,
             source=source,
+            override_date=override_date,
         )
-        self._pending_category_resolutions[telegram_user_id] = pending
+        _store_set(telegram_user_id, pending)
         return {
             "action": "clarify_category_choice",
             "message": formatter.format_category_resolution_prompt(pending.raw_category, suggestions, self.parser_service.detect_merchant_label(pending.raw_category)),
@@ -307,6 +293,7 @@ class TelegramTextFlow:
             telegram_user_id=telegram_user_id,
             source=pending.source,
             parsed=resolved,
+            override_date=pending.override_date,
         )
 
         # Learn the merchant -> category mapping for future auto-categorization
@@ -316,11 +303,21 @@ class TelegramTextFlow:
 
         summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
         operation_label = "доход" if item.type == "income" else "расход"
+        # Show learned mapping in confirmation message
+        learned_mapping = (
+            f"{pending.raw_category} → {formatter.category_label(category)}"
+            if pending.raw_category and pending.raw_category != category
+            else None
+        )
         return {
             "action": "saved",
-            "message": formatter.format_saved(operation_label, item.amount, item.category, self._signed(summary.balance)),
+            "message": formatter.format_saved(
+                operation_label, item.amount, item.category,
+                self._signed(summary.balance), pending.override_date,
+                learned_mapping=learned_mapping,
+            ),
             "saved_category": item.category,
-            "remove_keyboard": remove_keyboard,
+            "saved_transaction_id": str(item.id),
         }
 
     def _check_learned_mapping(self, telegram_user_id: int, merchant_text: str) -> str | None:

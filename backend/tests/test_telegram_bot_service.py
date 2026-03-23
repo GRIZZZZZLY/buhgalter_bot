@@ -1,6 +1,10 @@
+from decimal import Decimal
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+from app.schemas.parser import ParseResult
 from app.schemas.telegram import TelegramVoicePayload
+from app.services.llm_service import LLMParsedItem, LLMTransactionResult
 from app.telegram.bot_service import TelegramBotService
 
 
@@ -21,14 +25,35 @@ class FakeAudioService:
             raise RuntimeError("conversion exploded")
         return self.wav_path
 
+    @staticmethod
+    def cleanup_audio_files(*paths: str) -> None:
+        pass  # no-op in tests
+
 
 def test_bot_service_processes_text_message(db_session) -> None:
-    service = TelegramBotService(db_session)
+    fake_parsed = ParseResult(
+        matched=True,
+        confidence=0.95,
+        confidence_label="high",
+        transaction_type="expense",
+        amount=Decimal("250"),
+        category="food",
+        description=None,
+        pattern="llm",
+        raw_input="расход 250 еда",
+    )
+    fake_llm_result = LLMTransactionResult(
+        intent="transaction",
+        items=[LLMParsedItem(parsed=fake_parsed, override_date=None)],
+    )
 
-    response = service.process_text_message(telegram_user_id=555, text="расход 250 еда")
+    service = TelegramBotService(db_session)
+    with patch.object(service.flow.llm_service, "process", return_value=fake_llm_result):
+        response = service.process_text_message(telegram_user_id=555, text="расход 250 еда")
 
     assert response["action"] == "saved"
-    assert "расход 250.00₽" in response["message"]
+    assert "250.00" in response["message"]
+    assert "Еда" in response["message"]
 
 
 def test_bot_service_processes_voice_message(db_session, tmp_path: Path) -> None:
