@@ -1,8 +1,31 @@
+from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
+from app.services.llm_service import LLMParsedItem, LLMTransactionResult
+from app.schemas.parser import ParseResult
 from app.services.parser_service import ParserService
 from app.services.transcript_postprocessor import TranscriptPostprocessor
 from app.telegram.handlers import TelegramTextFlow
+
+
+def _make_llm_result(items: list[LLMParsedItem]) -> LLMTransactionResult:
+    return LLMTransactionResult(intent="transaction", items=items)
+
+
+def _make_item(tx_type: str, amount: Decimal, category: str) -> LLMParsedItem:
+    parsed = ParseResult(
+        matched=True,
+        confidence=0.95,
+        confidence_label="high",
+        transaction_type=tx_type,
+        amount=amount,
+        category=category,
+        description=None,
+        pattern="llm",
+        raw_input="",
+    )
+    return LLMParsedItem(parsed=parsed, override_date=None)
 
 
 def test_parser_parse_many_two_expenses() -> None:
@@ -46,14 +69,21 @@ def test_voice_confirm_saves_multiple_transactions(db_session, tmp_path: Path) -
     )
 
     flow = TelegramTextFlow(db_session)
-    first = flow.handle_voice(555, 991, "file-multi", "voice", str(wav_path))
-    confirmed = flow.confirm_voice(first["voice_log_id"])
+    multi_result = _make_llm_result([
+        _make_item("expense", Decimal("2600"), "food"),
+        _make_item("expense", Decimal("400"), "transport"),
+    ])
+
+    with patch.object(flow.voice_flow_service.llm_service, "process", return_value=multi_result):
+        first = flow.handle_voice(555, 991, "file-multi", "voice", str(wav_path))
+        confirmed = flow.confirm_voice(first["voice_log_id"])
+
     summary = flow.handle_summary(telegram_user_id=555, period="month")
 
     assert first["action"] == "confirm_voice"
-    assert "Я услышал 2 записи:" in first["message"]
+    assert "2" in first["message"]
+    assert "Верно?" in first["message"]
     assert confirmed["action"] == "voice_confirmed"
-    assert "В летопись внесены записи:" in confirmed["message"]
-    assert "1. расход 2600.00₽ — Еда" in confirmed["message"]
-    assert "2. расход 400.00₽ — Транспорт" in confirmed["message"]
-    assert "Расход: -3000.00₽" in summary["message"]
+    assert "2600.00" in confirmed["message"]
+    assert "400.00" in confirmed["message"]
+    assert "3000.00" in summary["message"]

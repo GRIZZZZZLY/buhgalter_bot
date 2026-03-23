@@ -10,10 +10,16 @@ from app.services.transaction_service import TransactionService
 from app.services.stt_service import STTService
 from app.services.transcript_postprocessor import TranscriptPostprocessor
 from app.telegram.formatter import TreasuryFormatter
+from app.services.llm_service import LLMService, LLMParsedItem, LLMTransactionResult, LLMUnavailableError
 
 
 class VoiceFlowService:
-    def __init__(self, db: Session, parser_service: ParserService | None = None, stt_service: STTService | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        parser_service: ParserService | None = None,
+        stt_service: STTService | None = None,
+    ) -> None:
         self.db = db
         self.parser_service = parser_service or ParserService()
         self.stt_service = stt_service or STTService()
@@ -21,6 +27,17 @@ class VoiceFlowService:
         self.transactions = TransactionService(db)
         self.postprocessor = TranscriptPostprocessor()
         self.formatter = TreasuryFormatter()
+        self.llm_service = LLMService(db)
+
+    def _llm_parse(self, text: str, telegram_user_id: int) -> list[LLMParsedItem] | None:
+        """Call LLM and return items, or None on failure."""
+        try:
+            result = self.llm_service.process(text, telegram_user_id)
+        except LLMUnavailableError:
+            return None
+        if not isinstance(result, LLMTransactionResult):
+            return None
+        return result.items
 
     def process_voice(
         self,
@@ -51,8 +68,8 @@ class VoiceFlowService:
             )
 
         normalized_transcript = self.postprocessor.normalize(stt_result.text)
-        multi = self.parser_service.parse_many(normalized_transcript)
-        if not multi.has_items:
+        llm_items = self._llm_parse(normalized_transcript, telegram_user_id)
+        if not llm_items:
             log = self.voice_logs.create_pending(
                 telegram_user_id=telegram_user_id,
                 telegram_message_id=telegram_message_id,
@@ -62,7 +79,7 @@ class VoiceFlowService:
                 parser_confidence=0.0,
                 parser_status="fallback",
                 status=VoiceLogStatus.FAILED,
-                failure_reason="parser fallback",
+                failure_reason="llm unavailable or no items",
             )
             return VoiceConfirmationResult(
                 action="voice_fallback",
@@ -71,37 +88,31 @@ class VoiceFlowService:
                 message="Не удалось распознать. Попробуй текстом.",
             )
 
+        parsed_results = [item.parsed for item in llm_items]
+
         log = self.voice_logs.create_pending(
             telegram_user_id=telegram_user_id,
             telegram_message_id=telegram_message_id,
             file_id=file_id,
             original_text=original_text,
             transcript_text=normalized_transcript,
-            parser_confidence=max(item.confidence for item in multi.items),
-            parser_status="multi" if len(multi.items) > 1 else multi.items[0].confidence_label,
+            parser_confidence=0.95,
+            parser_status="multi" if len(parsed_results) > 1 else "high",
             status=VoiceLogStatus.PENDING,
         )
-        if len(multi.items) == 1 and multi.items[0].confidence_label == 'medium':
-            parsed = multi.items[0]
-            raw_category = self.parser_service.normalize_category_candidate((parsed.description or '').strip())
-            suggestions = self.parser_service.suggest_categories(raw_category)
-            return VoiceConfirmationResult(
-                action='clarify_category_choice',
-                voice_log_id=log.id,
-                transcript=normalized_transcript,
-                message=self.formatter.format_category_resolution_prompt(raw_category, suggestions, self.parser_service.detect_merchant_label(raw_category)),
-                parsed_items=[self._item_preview(parsed)],
-                raw_category=raw_category,
-                suggestions=suggestions,
-                parsed_result=parsed,
-            )
 
-        parsed_items = [self._item_preview(item) for item in multi.items]
-        message = (
-            self.formatter.format_voice_confirm_many(parsed_items)
-            if len(parsed_items) > 1
-            else self.formatter.format_voice_confirm(normalized_transcript)
-        )
+        parsed_items = [self._item_preview(p) for p in parsed_results]
+        if len(parsed_items) == 1:
+            item = parsed_items[0]
+            message = self.formatter.format_voice_confirm(
+                tx_type=item["type"],
+                amount=item["amount"],
+                category=item["category"],
+                transcript=normalized_transcript,
+            )
+        else:
+            message = self.formatter.format_voice_confirm_many(parsed_items, transcript=normalized_transcript)
+
         return VoiceConfirmationResult(
             action="confirm_voice",
             voice_log_id=log.id,
@@ -113,7 +124,10 @@ class VoiceFlowService:
     def start_edit_voice(self, voice_log_id: UUID) -> VoiceConfirmationResult:
         log = self.voice_logs.mark_edit_pending(voice_log_id)
         if log is None or not log.transcript_text:
-            return VoiceConfirmationResult(action="voice_fallback", message="Не нашёл голосовую сессию для правки.")
+            return VoiceConfirmationResult(
+                action="voice_fallback",
+                message="Не нашёл голосовую сессию для правки.",
+            )
         return VoiceConfirmationResult(
             action="voice_edit_required",
             voice_log_id=voice_log_id,
@@ -127,23 +141,29 @@ class VoiceFlowService:
             return None
 
         normalized = self.postprocessor.normalize(edited_text)
-        multi = self.parser_service.parse_many(normalized)
-        if not multi.has_items:
+        llm_items = self._llm_parse(normalized, log.telegram_user_id)
+        if not llm_items:
             self.voice_logs.update_transcript(log.id, normalized, parser_status="edited_failed")
             return VoiceConfirmationResult(
                 action="voice_edit_required",
                 voice_log_id=log.id,
                 transcript=normalized,
-                message=f"Не смог разобрать исправленный текст: {normalized}. Попробуй ещё раз.",
+                message=f"Не смог разобрать: {normalized}. Попробуй ещё раз.",
             )
 
         self.voice_logs.update_transcript(log.id, normalized, parser_status="edited")
-        parsed_items = [self._item_preview(item) for item in multi.items]
-        message = (
-            self.formatter.format_voice_confirm_many(parsed_items)
-            if len(parsed_items) > 1
-            else self.formatter.format_voice_confirm(normalized)
-        )
+        parsed_items = [self._item_preview(item.parsed) for item in llm_items]
+        if len(parsed_items) == 1:
+            item = parsed_items[0]
+            message = self.formatter.format_voice_confirm(
+                tx_type=item["type"],
+                amount=item["amount"],
+                category=item["category"],
+                transcript=normalized,
+            )
+        else:
+            message = self.formatter.format_voice_confirm_many(parsed_items, transcript=normalized)
+
         return VoiceConfirmationResult(
             action="confirm_voice",
             voice_log_id=log.id,
@@ -155,27 +175,38 @@ class VoiceFlowService:
     def confirm_voice(self, voice_log_id: UUID) -> VoiceConfirmationResult:
         log = self.voice_logs.get(voice_log_id)
         if log is None or not log.transcript_text:
-            return VoiceConfirmationResult(action="voice_fallback", message="Не нашёл голосовую сессию. Отправь голос ещё раз.")
+            return VoiceConfirmationResult(
+                action="voice_fallback",
+                message="Не нашёл голосовую сессию. Отправь голос ещё раз.",
+            )
 
-        multi = self.parser_service.parse_many(log.transcript_text)
-        if not multi.has_items:
+        llm_items = self._llm_parse(log.transcript_text, log.telegram_user_id)
+        if not llm_items:
             self.voice_logs.update_status(voice_log_id, VoiceLogStatus.FAILED)
             return VoiceConfirmationResult(
                 action="voice_edit_required",
                 voice_log_id=voice_log_id,
                 transcript=log.transcript_text,
-                message=f"Не смог уверенно выделить записи из: {log.transcript_text}. Пришли текстом, и я запишу.",
+                message=f"Не смог выделить записи из: {log.transcript_text}. Пришли текстом.",
             )
 
         saved_items: list[dict[str, str]] = []
-        for parsed in multi.items:
+        saved_tx_ids: list[str] = []
+        for llm_item in llm_items:
+            parsed = llm_item.parsed
             if parsed.amount is None:
                 continue
             if parsed.transaction_type is None:
                 parsed.transaction_type = "expense"
             if parsed.category is None:
                 parsed.category = "other"
-            self.transactions.create_from_parse(telegram_user_id=log.telegram_user_id, source="voice", parsed=parsed)
+            tx = self.transactions.create_from_parse(
+                telegram_user_id=log.telegram_user_id,
+                source="voice",
+                parsed=parsed,
+                override_date=llm_item.override_date,
+            )
+            saved_tx_ids.append(str(tx.id))
             saved_items.append(self._item_preview(parsed))
 
         if not saved_items:
@@ -184,22 +215,26 @@ class VoiceFlowService:
                 action="voice_edit_required",
                 voice_log_id=voice_log_id,
                 transcript=log.transcript_text,
-                message=f"Не смог уверенно выделить записи из: {log.transcript_text}. Пришли текстом, и я запишу.",
+                message=f"Не смог выделить записи из: {log.transcript_text}. Пришли текстом.",
             )
 
         self.voice_logs.update_status(voice_log_id, VoiceLogStatus.CONFIRMED)
-        summary = self.transactions.get_summary(telegram_user_id=log.telegram_user_id, period="month")
+        summary = self.transactions.get_summary(
+            telegram_user_id=log.telegram_user_id, period="month"
+        )
         balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
 
         if len(saved_items) == 1:
             item = saved_items[0]
-            transcript_suffix = log.transcript_text if (item["category"] == "other") else None
             return VoiceConfirmationResult(
                 action="voice_confirmed",
                 voice_log_id=voice_log_id,
                 transcript=log.transcript_text,
-                message=self.formatter.format_voice_saved(item["type"], item["amount"], item["category"], balance, transcript_suffix),
+                message=self.formatter.format_voice_saved(
+                    item["type"], item["amount"], item["category"], balance
+                ),
                 parsed_items=saved_items,
+                saved_transaction_ids=saved_tx_ids,
             )
 
         return VoiceConfirmationResult(
@@ -208,13 +243,21 @@ class VoiceFlowService:
             transcript=log.transcript_text,
             message=self.formatter.format_saved_many(saved_items, balance),
             parsed_items=saved_items,
+            saved_transaction_ids=saved_tx_ids,
         )
 
     def cancel_voice(self, voice_log_id: UUID) -> VoiceConfirmationResult:
         updated = self.voice_logs.update_status(voice_log_id, VoiceLogStatus.CANCELLED)
         if updated is None:
-            return VoiceConfirmationResult(action="voice_fallback", message="Не нашёл голосовую сессию. Нечего отменять.")
-        return VoiceConfirmationResult(action="voice_cancelled", voice_log_id=voice_log_id, message="Окей, не записываю.")
+            return VoiceConfirmationResult(
+                action="voice_fallback",
+                message="Не нашёл голосовую сессию. Нечего отменять.",
+            )
+        return VoiceConfirmationResult(
+            action="voice_cancelled",
+            voice_log_id=voice_log_id,
+            message="Запись отменена.",
+        )
 
     @staticmethod
     def _item_preview(parsed) -> dict[str, str]:
