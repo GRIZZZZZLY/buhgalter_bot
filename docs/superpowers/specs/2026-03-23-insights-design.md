@@ -43,19 +43,66 @@ class InsightFact:
 
 ---
 
+## Date Window Definitions
+
+All detectors use **rolling windows** (no ISO calendar):
+
+- **"this week"** = last 7 days (days 0–6 ago, inclusive of today)
+- **"last week"** = days 7–13 ago
+- **"this month"** = last 30 days
+- **"last month"** = days 30–59 ago
+
+---
+
 ## Detectors
 
-Five detectors run in priority order. First match wins.
+Five detectors run in priority order. First match wins. Each is a private method returning `InsightFact | None`.
 
-| Priority | Name | Trigger condition |
-|---|---|---|
-| 1 | `category_spike` | A category this week > 150% of last week AND delta > 500 ₽ |
-| 2 | `budget_milestone` | User has N consecutive days within budget (thresholds: 7, 14, 30) |
-| 3 | `weekly_anomaly` | Total spend this week > 130% of average weekly spend over last month |
-| 4 | `category_record` | A category this month > 140% of same category last month |
-| 5 | `motivational_streak` | 3rd or more transaction saved today |
+### 1. `_detect_category_spike`
+Query expense transactions for "this week" and "last week" grouped by `category`.
+For each category: if `this_week_sum > last_week_sum * 1.5` AND `this_week_sum - last_week_sum > 500` → return fact.
+Return the category with the largest absolute delta. If no category passes → `None`.
 
-Detectors are private methods of `InsightService`. Each returns `InsightFact | None`.
+```python
+InsightFact(type="category_spike", data={
+    "category": "еда", "this_week": 3200, "last_week": 1800, "delta_pct": 78
+})
+```
+
+### 2. `_detect_budget_milestone`
+Skip if `user.budget_amount is None` → return `None`.
+
+Daily budget limit = `user.budget_amount / 30` (fixed denominator, simple).
+
+For each of the last 30 days: sum all expense transactions on that date (user's timezone). Count the longest consecutive streak of days where `daily_sum <= daily_limit`. If streak ∈ {7, 14, 30} AND today is the last day of the streak → return fact.
+
+```python
+InsightFact(type="budget_milestone", data={"streak_days": 7, "daily_limit": 1667})
+```
+
+### 3. `_detect_weekly_anomaly`
+Sum expenses for "this week". Compute average weekly spend over "last month" (= total last-month expenses / 4).
+If `this_week_sum > avg_weekly * 1.3` → return fact. If no history → `None`.
+
+```python
+InsightFact(type="weekly_anomaly", data={"this_week": 12400, "avg_weekly": 9000, "delta_pct": 38})
+```
+
+### 4. `_detect_category_record`
+For each category: compare "this month" vs "last month" totals.
+If `this_month > last_month * 1.4` AND `last_month > 0` → return fact (largest relative delta).
+
+```python
+InsightFact(type="category_record", data={"category": "кафе", "this_month": 4200, "last_month": 2800})
+```
+
+### 5. `_detect_motivational_streak`
+Read `user.transactions_today` (existing cached int counter on `User` model, maintained by the save flow).
+If `user.transactions_today >= 3` → return fact.
+
+```python
+InsightFact(type="motivational_streak", data={"count": 5})
+```
 
 New detectors (e.g., savings goals, debt payoff progress) can be added later by inserting a new method into the priority list — no other changes required.
 
@@ -84,22 +131,24 @@ If `LLMUnavailableError` is raised → catch silently, return `None`. The bot co
 
 ## Cooldown & Delivery
 
-### Cooldown (real-time only)
+### Cooldown (shared — real-time and scheduled)
 
-- New column `last_insight_at: DateTime | None` on `users` table (Alembic migration)
-- Before running detectors: if `last_insight_at.date() == today` (user's timezone) → return `None`
-- After successful send: `user.last_insight_at = datetime.now(tz)`
-- Scheduled insights (morning/evening) do not check cooldown — they fire at most once per day by the scheduler's own logic
+- New column `last_insight_at: DateTime(timezone=True) | None` on `users` table
+- **`today`** is always derived as `datetime.now(ZoneInfo(user.timezone)).date()`
+- Before running detectors in **both** `get_realtime_insight` and `get_scheduled_insight`: if `last_insight_at` is not None AND `last_insight_at.astimezone(ZoneInfo(user.timezone)).date() == today` → return `None`
+- After generating text: `user.last_insight_at = datetime.now(timezone.utc)`, then `db.commit()`
+- Result: maximum **one insight per user per day** regardless of source (real-time or scheduled)
 
 ### Delivery
 
 | Context | How delivered |
 |---|---|
 | After transaction save (`runtime.py`) | Separate message immediately after save confirmation |
-| Morning briefing | Appended as extra paragraph at end of existing message |
-| Evening check-in | Appended as extra paragraph at end of existing message |
+| Morning briefing (`scheduler_service.py`) | Appended as extra paragraph at end of existing message |
 
-If the morning/evening message has no content (no transactions to report), the insight is also skipped — it lives inside existing messages, not as standalone noise.
+**Evening check-in is excluded** — it already has action buttons and category UI; appending an insight there would add noise. Scheduled insights are morning-only.
+
+If the morning message has no content (no transactions to report), the insight is also skipped — it lives inside an existing message, not standalone.
 
 ---
 
@@ -126,7 +175,7 @@ if insight:
 ```
 
 ### `scheduler_service.py`
-In `_check_morning_reminders` and `_check_evening_reminders`, after building the main message:
+In `_check_morning_reminders` only, after building the main message:
 ```python
 insight = InsightService(db).get_scheduled_insight(user)
 if insight:
@@ -157,7 +206,7 @@ if insight:
 
 ## Known Limitations
 
-- `motivational_streak` detector counts all transactions for today — if user deletes transactions it may still fire
+- `motivational_streak` uses `user.transactions_today` cached counter — if user deletes transactions it may still fire
 - LLM tone is not configurable — consistent casual/friendly style
 - No per-detector opt-out — all or nothing (acceptable for v1)
 
@@ -169,11 +218,14 @@ if insight:
 
 | Test | Scenario |
 |---|---|
-| `test_category_spike_detected` | Current week food > 150% last week → fact returned |
+| `test_category_spike_detected` | Current week food > 150% last week AND delta > 500 ₽ → fact returned |
 | `test_category_spike_below_threshold` | Delta < 500 ₽ → no fact |
-| `test_budget_milestone_7_days` | 7 consecutive days in budget → fact returned |
+| `test_budget_milestone_7_days` | 7 consecutive days under daily limit → fact returned |
+| `test_budget_milestone_no_budget_set` | `user.budget_amount is None` → detector returns None, no crash |
 | `test_weekly_anomaly_detected` | This week > 130% average → fact returned |
-| `test_cooldown_skips_realtime` | `last_insight_at` = today → `get_realtime_insight` returns None |
-| `test_no_cooldown_for_scheduled` | `last_insight_at` = today → `get_scheduled_insight` still returns insight |
-| `test_llm_error_returns_none` | LLM raises → returns None, no exception |
-| `test_motivational_streak_third_tx` | 3rd transaction today → fact returned |
+| `test_weekly_anomaly_no_history` | No transactions in last month → returns None, no crash |
+| `test_cooldown_skips_realtime` | `last_insight_at` = today (user tz) → `get_realtime_insight` returns None |
+| `test_cooldown_skips_scheduled` | `last_insight_at` = today (user tz) → `get_scheduled_insight` also returns None |
+| `test_llm_error_returns_none` | LLM raises `LLMUnavailableError` → returns None, no exception propagated |
+| `test_motivational_streak_uses_cached_counter` | `user.transactions_today = 3` → fact returned (no DB query) |
+| `test_no_transactions_returns_none` | User has zero transactions → all detectors return None, no crash |
