@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from openai import APIError, OpenAI
 from sqlalchemy.orm import Session
@@ -15,9 +15,6 @@ from app.core.settings import get_settings
 from app.repositories.transaction_repository import TransactionRepository
 from app.schemas.parser import ParseResult
 from app.services.config_loader import load_yaml
-
-if TYPE_CHECKING:
-    from app.models.transaction import Transaction
 
 logger = logging.getLogger(__name__)
 
