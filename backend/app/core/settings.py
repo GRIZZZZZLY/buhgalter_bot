@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./finance_bot.db"
     telegram_bot_token: str = ""
     openai_api_key: str = ""
+    openrouter_api_key: str = ""
+    llm_model: str = "minimax/minimax-m1:free"
     ffmpeg_bin: str = "ffmpeg"
     stt_provider: str = "faster-whisper"
     whisper_model: str = "base"
@@ -23,6 +25,10 @@ class Settings(BaseSettings):
     telegram_mode: str = "polling"
     telegram_webhook_url: str = ""
     telegram_webhook_secret: str = ""
+    # Comma-separated list of allowed CORS origins.
+    # Leave empty in dev to allow all origins ("*").
+    # Example: https://your-domain.com,https://t.me
+    cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
