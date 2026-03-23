@@ -35,6 +35,14 @@ class User(Base):
     # Reminder suppression (count of consecutive ignored evening reminders)
     ignored_evening_reminders: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Deduplication of weekly planned digest (stores Sunday's date YYYY-MM-DD)
+    last_planned_digest_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    # Insights cooldown
+    last_insight_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
