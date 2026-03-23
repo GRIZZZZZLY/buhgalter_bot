@@ -148,7 +148,7 @@ def test_advisor_question(db_session):
 
     assert isinstance(result, LLMAdvisorResult)
     assert result.intent == "advisor"
-    assert len(result.answer) > 0
+    assert result.answer == "В этом месяце ты потратил 3 200 ₽ на еду."
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +176,12 @@ def test_empty_items_raises(db_session):
 def test_http_error_raises(db_session):
     from openai import APIError
 
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = []
+    mock_message = MagicMock()
+    mock_message.content = "{}"
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_completion = MagicMock()
+    mock_completion.choices = [mock_choice]
 
     with patch("app.services.llm_service.OpenAI") as mock_openai_cls:
         mock_client = MagicMock()
@@ -185,8 +189,7 @@ def test_http_error_raises(db_session):
             message="500 Internal Server Error", request=MagicMock(), body=None
         )
         mock_openai_cls.return_value = mock_client
-        svc = LLMService(db)
+        svc = LLMService(db_session)
         svc._client = mock_client
-
-    with pytest.raises(LLMUnavailableError):
-        svc.process("купил что-то", telegram_user_id=1)
+        with pytest.raises(LLMUnavailableError):
+            svc.process("купил что-то", telegram_user_id=1)

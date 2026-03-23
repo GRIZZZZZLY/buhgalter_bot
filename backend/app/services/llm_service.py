@@ -64,6 +64,7 @@ class LLMService:
         self._client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.openrouter_api_key,
+            timeout=60.0,
         )
         self._model = settings.llm_model
         self._categories_config = load_yaml("categories.yaml")
