@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -13,9 +13,10 @@ from telegram.ext import Application
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
-from app.services.reminder_service import ReminderService, CATEGORY_EMOJI
+from app.services.planned_expense_service import PlannedExpenseService
+from app.services.reminder_service import ReminderService
 from app.telegram.formatter import TreasuryFormatter
-from app.telegram.keyboards import evening_checkin_keyboard
+from app.telegram.keyboards import evening_checkin_keyboard, planned_expense_due_keyboard
 
 logger = logging.getLogger("finance_bot.scheduler")
 formatter = TreasuryFormatter()
@@ -66,8 +67,29 @@ class SchedulerService:
             replace_existing=True,
             max_instances=1,
         )
+        self.scheduler.add_job(
+            self._check_recurring_transactions,
+            trigger=IntervalTrigger(hours=1),
+            id="recurring_check",
+            replace_existing=True,
+            max_instances=1,
+        )
+        self.scheduler.add_job(
+            self._check_planned_expense_reminders,
+            trigger=IntervalTrigger(minutes=1),
+            id="planned_expense_check",
+            replace_existing=True,
+            max_instances=1,
+        )
+        self.scheduler.add_job(
+            self._check_weekly_planned_digest,
+            trigger=IntervalTrigger(minutes=30),
+            id="weekly_planned_digest_check",
+            replace_existing=True,
+            max_instances=1,
+        )
         self.scheduler.start()
-        logger.info("scheduler started with morning/evening/streak/digest/first-week jobs")
+        logger.info("scheduler started with morning/evening/streak/digest/first-week/recurring/planned jobs")
 
     def stop(self) -> None:
         if self.scheduler.running:
@@ -89,6 +111,14 @@ class SchedulerService:
                         reminder_service = ReminderService(db)
                         message = reminder_service.build_morning_briefing(user)
                         if message:
+                            # Append scheduled insight if available (silent on error)
+                            try:
+                                from app.services.insight_service import InsightService
+                                insight_text = InsightService(db).get_scheduled_insight(user)
+                                if insight_text:
+                                    message += f"\n\n💡 {insight_text}"
+                            except Exception:
+                                logger.exception("scheduled insight failed for user=%s", user.telegram_user_id)
                             await self._send_message(user.telegram_user_id, message)
                             logger.info("morning briefing sent: user=%s", user.telegram_user_id)
 
@@ -230,6 +260,84 @@ class SchedulerService:
             logger.exception("first week summary check failed")
 
     # ------------------------------------------------------------------
+    # Planned expenses: same-day reminders
+    # ------------------------------------------------------------------
+    async def _check_planned_expense_reminders(self) -> None:
+        """Send morning reminder for planned expenses due today."""
+        try:
+            with SessionLocal() as db:
+                user_repo = UserRepository(db)
+                users = user_repo.get_all_with_morning_reminder()
+                planned_service = PlannedExpenseService(db)
+
+                for user in users:
+                    if not self._is_time_to_send(user, user.reminder_morning):
+                        continue
+                    due_items = planned_service.list_due_today(date.today(), user.telegram_user_id)
+                    for item in due_items:
+                        raw = planned_service.repo.get(user.telegram_user_id, item.id)
+                        today_str = date.today().isoformat()
+                        if raw is None or raw.reminder_sent_date == today_str:
+                            continue
+                        msg = formatter.format_planned_due(item.title, item.amount, item.category, item.planned_date)
+                        kb = planned_expense_due_keyboard(item.id)
+                        await self._send_message(user.telegram_user_id, msg, reply_markup=kb)
+                        raw.reminder_sent_date = today_str
+                        db.flush()
+                        logger.info("planned expense reminder sent: user=%s planned_id=%s", user.telegram_user_id, item.id)
+                db.commit()
+        except Exception:
+            logger.exception("planned expense reminder check failed")
+
+    # ------------------------------------------------------------------
+    # Weekly planned digest (Sunday evening)
+    # ------------------------------------------------------------------
+    async def _check_weekly_planned_digest(self) -> None:
+        """Send a digest of next week's planned expenses on Sunday evening."""
+        try:
+            with SessionLocal() as db:
+                from sqlalchemy import select
+                from app.models.user import User as UserModel
+
+                stmt = select(UserModel)
+                users = list(db.scalars(stmt).all())
+                planned_service = PlannedExpenseService(db)
+
+                for user in users:
+                    try:
+                        tz = ZoneInfo(user.timezone)
+                    except Exception:
+                        tz = ZoneInfo("Europe/Moscow")
+
+                    now_local = datetime.now(tz)
+                    if now_local.weekday() != 6 or now_local.hour != 19 or now_local.minute >= 30:
+                        continue
+                    today_str = now_local.date().isoformat()
+                    if user.last_planned_digest_date == today_str:
+                        continue
+
+                    start = now_local.date() + timedelta(days=1)
+                    end = start + timedelta(days=6)
+                    items = planned_service.list_for_week(user.telegram_user_id, start, end)
+                    if not items:
+                        continue
+                    msg = formatter.format_weekly_planned_digest([
+                        {
+                            'title': item.title,
+                            'amount': item.amount,
+                            'category': item.category,
+                            'planned_date': item.planned_date,
+                        }
+                        for item in items
+                    ])
+                    await self._send_message(user.telegram_user_id, msg)
+                    user.last_planned_digest_date = today_str
+                    db.flush()
+                    logger.info("weekly planned digest sent: user=%s", user.telegram_user_id)
+        except Exception:
+            logger.exception("weekly planned digest check failed")
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
     def _is_time_to_send(self, user: User, reminder_time_str: str | None) -> bool:
@@ -251,6 +359,50 @@ class SchedulerService:
 
         # Match current hour:minute (1-minute window)
         return now_local.hour == target.hour and now_local.minute == target.minute
+
+    # ------------------------------------------------------------------
+    # Recurring transactions
+    # ------------------------------------------------------------------
+    async def _check_recurring_transactions(self) -> None:
+        """Fire due recurring transactions and send day-before reminders."""
+        try:
+            from datetime import date, timezone
+            from app.models.recurring_transaction import RecurringTransaction
+            from app.repositories.recurring_transaction_repository import RecurringTransactionRepository
+            from app.services.recurring_service import RecurringService
+
+            with SessionLocal() as db:
+                today = date.today()
+                tomorrow = today + timedelta(days=1)
+                today_str = today.isoformat()
+                tomorrow_str = tomorrow.isoformat()
+
+                rt_repo = RecurringTransactionRepository(db)
+                svc = RecurringService(db)
+
+                # Fire overdue
+                for rt in rt_repo.get_due_today(today_str):
+                    try:
+                        msg = svc.format_fired(rt)
+                        svc.spawn_planned_expense(rt)
+                        await self._send_message(rt.telegram_user_id, msg)
+                        logger.info("recurring spawned planned expense: id=%s user=%s", rt.id, rt.telegram_user_id)
+                    except Exception:
+                        logger.exception("failed to spawn planned expense for recurring id=%s", rt.id)
+
+                # Day-before reminders
+                for rt in rt_repo.get_due_tomorrow(tomorrow_str):
+                    try:
+                        msg = svc.format_reminder(rt)
+                        rt_repo.mark_reminder_sent(rt)
+                        await self._send_message(rt.telegram_user_id, msg)
+                        logger.info("recurring reminder sent: id=%s user=%s", rt.id, rt.telegram_user_id)
+                    except Exception:
+                        logger.exception("failed to send reminder for recurring id=%s", rt.id)
+
+                db.commit()
+        except Exception:
+            logger.exception("recurring check failed")
 
     async def _send_message(self, telegram_user_id: int, text: str, **kwargs) -> None:
         """Send a message via the bot application."""

@@ -23,7 +23,8 @@ from app.repositories.user_category_mapping_repository import UserCategoryMappin
 from app.schemas.telegram import TelegramVoicePayload
 from app.services.analytics_service import AnalyticsService
 from app.services.nav_service import NavService
-from app.services.recurring_service import RecurringService, parse_recurring_args
+from app.services.planned_expense_service import parse_plan_args
+from app.services.recurring_service import RecurringService, parse_recurring_args, parse_recurring_schedule_args
 from app.services.scheduler_service import SchedulerService
 from app.telegram.bot_service import TelegramBotService
 from app.telegram.formatter import TreasuryFormatter
@@ -41,6 +42,10 @@ from app.telegram.keyboards import (
     low_confidence_category_keyboard,
     low_confidence_keyboard,
     main_menu_inline_keyboard,
+    planned_expense_due_keyboard,
+    planned_manage_keyboard,
+    recurring_category_keyboard,
+    recurring_manage_keyboard,
     saved_actions_keyboard,
     settings_keyboard,
     start_keyboard,
@@ -251,7 +256,10 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("edit", edit_command))
     application.add_handler(CommandHandler("export", export_command))
+    application.add_handler(CommandHandler("plan", plan_command))
+    application.add_handler(CommandHandler("planned", planned_command))
     application.add_handler(CommandHandler("improve_categories", improve_categories_command))
+    application.add_handler(CallbackQueryHandler(recurring_callback_handler, pattern=r"^recurring:"))
     application.add_handler(CallbackQueryHandler(edit_callback_handler,    pattern=r"^edit:"))
     application.add_handler(CallbackQueryHandler(nav_callback_handler,     pattern=r"^nav:"))
     application.add_handler(CallbackQueryHandler(checkin_callback_handler, pattern=r"^checkin:"))
@@ -261,6 +269,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(voice_callback_handler,   pattern=r"^voice:"))
     application.add_handler(CallbackQueryHandler(catres_callback_handler,  pattern=r"^catres:"))
     application.add_handler(CallbackQueryHandler(lowconf_callback_handler, pattern=r"^lowconf:"))
+    application.add_handler(CallbackQueryHandler(planned_callback_handler, pattern=r"^planned:"))
     application.add_handler(CallbackQueryHandler(catfix_callback_handler,  pattern=r"^catfix:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
@@ -552,6 +561,107 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         document=InputFile(io.BytesIO(csv_bytes), filename=filename),
         caption=f"📊 Экспорт за {period_names.get(period, period)}: {len(items)} записей",
     )
+
+
+# ---------------------------------------------------------------------------
+# /plan /planned
+# ---------------------------------------------------------------------------
+
+async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        if not context.args:
+            await update.effective_message.reply_text(
+                "Формат: /plan название сумма дата категория\n"
+                "Примеры:\n"
+                "  /plan маникюр 2100 15.04 красота\n"
+                "  /plan стоматолог 8000 2030-04-22 здоровье\n"
+                "  /plan маникюр 2100 завтра красота\n"
+                "  /plan маникюр 2100 через 10 дней красота\n"
+                "  /plan маникюр 2100 в следующий вторник красота\n"
+                "  /plan маникюр 2100 1 мая красота"
+            )
+            return
+
+        parsed = parse_plan_args(list(context.args))
+        if isinstance(parsed, str):
+            await update.effective_message.reply_text(parsed)
+            return
+
+        from app.services.parser_service import ParserService
+        parser = ParserService()
+        category_slug = parser.category_lookup.get(parsed["category"], parsed["category"])
+
+        service = TelegramBotService(db)
+        response = service.process_plan_command(
+            telegram_user_id=update.effective_user.id,
+            title=parsed["title"],
+            amount=parsed["amount"],
+            category=category_slug,
+            planned_date=parsed["planned_date"].isoformat(),
+        )
+    await update.effective_message.reply_text(response["message"])
+
+
+async def planned_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from datetime import date as date_cls
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        service = TelegramBotService(db)
+        response = service.process_planned_command(update.effective_user.id)
+        items = service.planned_expense_service.list_all(update.effective_user.id)
+    if not items:
+        await update.effective_message.reply_text(response["message"])
+        return
+    await update.effective_message.reply_text(response["message"])
+    for item in items[:5]:
+        marker = "⚠️ " if item.planned_date < date_cls.today().isoformat() else "📅 "
+        await update.effective_message.reply_text(
+            f"{marker}{item.planned_date} — {item.title} — {item.amount} ₽ — {formatter.category_label(item.category)}",
+            reply_markup=planned_manage_keyboard(item.id),
+        )
+
+
+async def planned_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    planned_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    user_id = update.effective_user.id
+
+    if not planned_id:
+        await query.edit_message_text("Некорректный planned expense.")
+        return
+
+    if action == "edit_amount":
+        if context.user_data is not None:
+            context.user_data["awaiting_planned_amount"] = planned_id
+        await query.edit_message_text("Введи новую сумму для учёта:")
+        return
+
+    if action == "edit_date":
+        if context.user_data is not None:
+            context.user_data["awaiting_planned_date"] = planned_id
+        await query.edit_message_text("Введи новую дату: 15.04 или 2030-04-15")
+        return
+
+    with SessionLocal() as db:
+        service = TelegramBotService(db)
+        if action == "confirm":
+            response = service.confirm_planned_expense(user_id, planned_id)
+        elif action == "cancel":
+            response = service.cancel_planned_expense(user_id, planned_id)
+        else:
+            response = {"action": "planned_missing", "message": "Неизвестное действие."}
+
+    await query.edit_message_text(response["message"])
 
 
 # ---------------------------------------------------------------------------
@@ -1004,7 +1114,21 @@ async def recurring_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         if not context.args:
             items = svc.list_active(update.effective_user.id)
-            await update.effective_message.reply_text(svc.format_list(items))
+            if not items:
+                await update.effective_message.reply_text(svc.format_list(items))
+                return
+            await update.effective_message.reply_text("📋 Правила регулярных операций:")
+            for rt in items[:5]:
+                await update.effective_message.reply_text(
+                    formatter.format_recurring_rule(
+                        rt.title,
+                        f"{float(rt.amount):,.0f}",
+                        rt.category,
+                        svc._format_schedule(rt),
+                        rt.next_run_date,
+                    ),
+                    reply_markup=recurring_manage_keyboard(rt.id),
+                )
             return
 
         parsed = parse_recurring_args(list(context.args))
@@ -1026,6 +1150,60 @@ async def recurring_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             day_value=parsed["day_value"],
         )
         await update.effective_message.reply_text(svc.format_created(rt))
+
+
+async def recurring_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    recurring_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    extra = parts[3] if len(parts) > 3 else ""
+
+    if not recurring_id:
+        await query.edit_message_text("Некорректное правило recurring.")
+        return
+
+    if action == "amount":
+        if context.user_data is not None:
+            context.user_data["awaiting_recurring_amount"] = recurring_id
+        await query.edit_message_text("Введи новую сумму для правила:")
+        return
+
+    if action == "schedule":
+        if context.user_data is not None:
+            context.user_data["awaiting_recurring_schedule"] = recurring_id
+        await query.edit_message_text("Введи новый период: ежемесячно 10 / еженедельно 4 / каждые 30")
+        return
+
+    if action == "category":
+        categories = [
+            "food", "transport", "housing", "health", "beauty", "entertainment",
+            "subscriptions", "shopping", "home", "telecom", "work", "education",
+            "gifts", "fees", "salary", "freelance", "bonus", "transfer", "refund",
+            "other_income", "other",
+        ]
+        await query.edit_message_text("Выбери категорию:", reply_markup=recurring_category_keyboard(recurring_id, categories))
+        return
+
+    with SessionLocal() as db:
+        service = TelegramBotService(db)
+        if action == "disable":
+            response = service.deactivate_recurring(update.effective_user.id, recurring_id)
+        elif action == "set_category" and extra:
+            response = service.update_recurring_category(update.effective_user.id, recurring_id, extra)
+        elif action == "cancel":
+            response = {"action": "recurring_cancelled", "message": "Отмена."}
+        else:
+            response = {"action": "recurring_missing", "message": "Неизвестное действие."}
+
+    await query.edit_message_text(response["message"])
 
 
 async def recurring_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1147,6 +1325,101 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.effective_message.reply_text("❌ Запись не найдена.")
         return
 
+    # Handle planned expense custom amount confirmation
+    awaiting_planned_amount = context.user_data.get("awaiting_planned_amount") if context.user_data else None
+    if awaiting_planned_amount:
+        del context.user_data["awaiting_planned_amount"]
+        raw_amount = text.strip().replace(",", ".")
+        try:
+            amount = float(raw_amount)
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 2500")
+            return
+
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            service = TelegramBotService(db)
+            response = service.confirm_planned_expense(
+                telegram_user_id=update.effective_user.id,
+                planned_expense_id=int(awaiting_planned_amount),
+                actual_amount=amount,
+            )
+        await update.effective_message.reply_text(response["message"])
+        return
+
+    awaiting_planned_date = context.user_data.get("awaiting_planned_date") if context.user_data else None
+    if awaiting_planned_date:
+        del context.user_data["awaiting_planned_date"]
+        raw_date = text.strip()
+        try:
+            if "-" in raw_date:
+                from datetime import date as date_cls
+                parsed_date = date_cls.fromisoformat(raw_date)
+            else:
+                from datetime import date as date_cls
+                day, month = map(int, raw_date.split("."))
+                parsed_date = date_cls(date_cls.today().year, month, day)
+            if parsed_date < date.today():
+                raise ValueError
+        except Exception:
+            await update.effective_message.reply_text("❌ Не понял дату. Формат: 15.04 или 2030-04-15")
+            return
+
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            service = TelegramBotService(db)
+            response = service.update_planned_date(
+                telegram_user_id=update.effective_user.id,
+                planned_expense_id=int(awaiting_planned_date),
+                planned_date=parsed_date.isoformat(),
+            )
+        await update.effective_message.reply_text(response["message"])
+        return
+
+    awaiting_recurring_amount = context.user_data.get("awaiting_recurring_amount") if context.user_data else None
+    if awaiting_recurring_amount:
+        del context.user_data["awaiting_recurring_amount"]
+        raw_amount = text.strip().replace(",", ".")
+        try:
+            amount = float(raw_amount)
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 2500")
+            return
+
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            service = TelegramBotService(db)
+            response = service.update_recurring_amount(
+                telegram_user_id=update.effective_user.id,
+                recurring_id=int(awaiting_recurring_amount),
+                amount=amount,
+            )
+        await update.effective_message.reply_text(response["message"])
+        return
+
+    awaiting_recurring_schedule = context.user_data.get("awaiting_recurring_schedule") if context.user_data else None
+    if awaiting_recurring_schedule:
+        del context.user_data["awaiting_recurring_schedule"]
+        parsed = parse_recurring_schedule_args(text.strip().split())
+        if isinstance(parsed, str):
+            await update.effective_message.reply_text(parsed)
+            return
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            service = TelegramBotService(db)
+            response = service.update_recurring_schedule(
+                telegram_user_id=update.effective_user.id,
+                recurring_id=int(awaiting_recurring_schedule),
+                frequency=parsed["frequency"],
+                day_value=parsed["day_value"],
+            )
+        await update.effective_message.reply_text(response["message"])
+        return
+
     # Handle evening check-in custom amount
     awaiting_checkin = context.user_data.get("awaiting_checkin_category") if context.user_data else None
     if awaiting_checkin:
@@ -1245,6 +1518,24 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             [tx_id_str],
             correction_tx_id=tx_id_str,
         )
+        # Real-time insight (max once per day, silent on error)
+        try:
+            from app.services.insight_service import InsightService
+            from app.repositories.user_repository import UserRepository
+            with SessionLocal() as insight_db:
+                user_obj = UserRepository(insight_db).get_by_telegram_id(
+                    update.effective_user.id
+                )
+                if user_obj:
+                    insight_text = InsightService(insight_db).get_realtime_insight(
+                        user_obj, None
+                    )
+                    if insight_text:
+                        await update.effective_message.reply_text(
+                            insight_text, parse_mode="HTML"
+                        )
+        except Exception:
+            logger.exception("realtime insight failed")
         return
 
     await update.effective_message.reply_text(
