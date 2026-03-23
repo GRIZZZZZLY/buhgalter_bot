@@ -13,7 +13,7 @@ class TransactionRepository:
         self.db = db
 
     def create(self, payload: dict) -> Transaction:
-        transaction = Transaction(
+        kwargs: dict = dict(
             telegram_user_id=payload["telegram_user_id"],
             type=TransactionType(payload["type"]),
             amount=payload["amount"],
@@ -23,6 +23,10 @@ class TransactionRepository:
             raw_input=payload["raw_input"],
             confidence=payload["confidence"],
         )
+        # Allow overriding created_at for past-date entries
+        if payload.get("created_at") is not None:
+            kwargs["created_at"] = payload["created_at"]
+        transaction = Transaction(**kwargs)
         self.db.add(transaction)
         self.db.commit()
         self.db.refresh(transaction)
@@ -118,6 +122,43 @@ class TransactionRepository:
         result = self.db.execute(stmt)
         self.db.commit()
         return int(result.rowcount or 0)
+
+    def sum_expenses_by_category(
+        self, telegram_user_id: int, start: datetime, end: datetime
+    ) -> dict[str, Decimal]:
+        """Sum expense amounts grouped by category between start (inclusive) and end (exclusive)."""
+        stmt = (
+            select(Transaction.category, func.sum(Transaction.amount).label("total"))
+            .where(
+                Transaction.telegram_user_id == telegram_user_id,
+                Transaction.type == TransactionType.EXPENSE,
+                Transaction.created_at >= start,
+                Transaction.created_at < end,
+            )
+            .group_by(Transaction.category)
+        )
+        rows = self.db.execute(stmt).all()
+        return {row.category: Decimal(str(row.total)) for row in rows}
+
+    def sum_expenses_per_day(
+        self, telegram_user_id: int, start: datetime, end: datetime
+    ) -> dict[date, Decimal]:
+        """Sum expense amounts grouped by UTC date between start (inclusive) and end (exclusive)."""
+        stmt = (
+            select(
+                func.date(Transaction.created_at).label("day"),
+                func.sum(Transaction.amount).label("total"),
+            )
+            .where(
+                Transaction.telegram_user_id == telegram_user_id,
+                Transaction.type == TransactionType.EXPENSE,
+                Transaction.created_at >= start,
+                Transaction.created_at < end,
+            )
+            .group_by(func.date(Transaction.created_at))
+        )
+        rows = self.db.execute(stmt).all()
+        return {date.fromisoformat(row.day): Decimal(str(row.total)) for row in rows}
 
     @staticmethod
     def _build_period_filter(period: str):
