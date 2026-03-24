@@ -280,7 +280,71 @@ def recurring_confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 ```
 
-- [ ] **Step 4: Run full test suite — verify no regressions**
+- [ ] **Step 4: Write failing tests for new keyboard functions**
+
+Create `backend/tests/test_planned_recurring_keyboards.py`:
+
+```python
+from app.telegram.keyboards import (
+    main_menu_inline_keyboard,
+    planned_input_keyboard,
+    recurring_input_keyboard,
+    planned_confirm_keyboard,
+    recurring_confirm_keyboard,
+)
+
+
+def _all_callbacks(kb):
+    return [btn.callback_data for row in kb.inline_keyboard for btn in row]
+
+
+def test_main_menu_has_planned_input_button():
+    cbs = _all_callbacks(main_menu_inline_keyboard())
+    assert "nav:planned_input" in cbs
+    assert "nav:recurring_input" in cbs
+
+
+def test_planned_input_keyboard_has_list_and_back():
+    cbs = _all_callbacks(planned_input_keyboard())
+    assert "nav:planned_list" in cbs
+    assert "nav:menu" in cbs
+
+
+def test_recurring_input_keyboard_has_list_and_back():
+    cbs = _all_callbacks(recurring_input_keyboard())
+    assert "nav:recurring_list" in cbs
+    assert "nav:menu" in cbs
+
+
+def test_planned_confirm_keyboard_callbacks():
+    cbs = _all_callbacks(planned_confirm_keyboard())
+    assert "planned_input:confirm" in cbs
+    assert "planned_input:cancel" in cbs
+
+
+def test_recurring_confirm_keyboard_callbacks():
+    cbs = _all_callbacks(recurring_confirm_keyboard())
+    assert "recurring_input:confirm" in cbs
+    assert "recurring_input:cancel" in cbs
+```
+
+- [ ] **Step 5: Run keyboard tests — verify FAIL**
+
+```bash
+cd backend && pytest tests/test_planned_recurring_keyboards.py -v
+```
+
+Expected: `ImportError` or `AssertionError` (functions don't exist yet / wrong callbacks)
+
+- [ ] **Step 6: Implement keyboard changes (Steps 1–3 above), then run tests — verify PASS**
+
+```bash
+cd backend && pytest tests/test_planned_recurring_keyboards.py -v
+```
+
+Expected: 5 PASSED
+
+- [ ] **Step 7: Run full test suite — verify no regressions**
 
 ```bash
 cd backend && pytest -x -q
@@ -288,10 +352,10 @@ cd backend && pytest -x -q
 
 Expected: all tests pass (if `test_navigation_menu.py` fails on button label assertions — update the expected strings to match new labels)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add backend/app/telegram/keyboards.py
+git add backend/app/telegram/keyboards.py backend/tests/test_planned_recurring_keyboards.py
 git commit -m "feat: update main menu buttons and add planned/recurring input keyboards"
 ```
 
@@ -380,6 +444,7 @@ async def planned_input_callback_handler(
     if action == "cancel":
         if context.user_data:
             context.user_data.pop("pending_planned", None)
+            context.user_data.pop("mode", None)
         try:
             await query.edit_message_text(
                 "Отменено.",
@@ -444,6 +509,7 @@ async def recurring_input_callback_handler(
     if action == "cancel":
         if context.user_data:
             context.user_data.pop("pending_recurring", None)
+            context.user_data.pop("mode", None)
         try:
             await query.edit_message_text(
                 "Отменено.",
@@ -480,7 +546,7 @@ async def recurring_input_callback_handler(
         )
 
     sign = "+" if rt.transaction_type == "income" else "−"
-    freq_label = RecurringService(None)._format_schedule(rt) if False else _format_recurring_schedule(rt)
+    freq_label = _format_recurring_schedule(rt)
     try:
         await query.edit_message_text(
             f"✅ Добавлено: {rt.title} {sign}{float(rt.amount):,.0f} ₽ — {_format_recurring_schedule(rt)}",
@@ -760,6 +826,7 @@ In `voice_message_handler` (line ~1786), after the file is downloaded to `temp_p
         try:
             from app.services.audio_file_service import AudioFileService
             from app.services.stt_service import STTService
+            # STTService() takes no required arguments (verified: used as STTService() in VoiceFlowService)
             audio_svc = AudioFileService()
             wav_path = audio_svc.prepare_wav_from_ogg(temp_path)
             stt = STTService()
