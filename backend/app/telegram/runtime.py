@@ -231,6 +231,169 @@ async def sugg_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await query.edit_message_reply_markup(reply_markup=None)
 
 
+async def categories_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    param = parts[2] if len(parts) > 2 else ""
+    user_id = update.effective_user.id
+
+    from app.services.category_service import CategoryService
+    from app.telegram.keyboards import (
+        category_edit_keyboard,
+        category_type_keyboard,
+        category_reassign_keyboard,
+        category_delete_confirm_keyboard,
+    )
+
+    if action == "noop":
+        return
+
+    if action == "edit":
+        slug = param
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = CategoryService(db)
+            svc.ensure_seeded(user_id)
+            cat = svc._repo.get_by_slug(user_id, slug)
+        if cat is None:
+            await query.edit_message_text("❌ Категория не найдена.")
+            return
+        text = f"✏️ *{cat.emoji} {cat.name_ru}*\n\nЧто изменить?"
+        await query.edit_message_text(
+            text,
+            reply_markup=category_edit_keyboard(slug, cat.is_custom),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "rename":
+        slug = param
+        context.user_data["awaiting_category_rename"] = slug
+        await query.edit_message_text(
+            "✏️ Введи новое название категории:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(text="Отмена", callback_data=f"categories:edit:{slug}")
+            ]]),
+        )
+        return
+
+    if action == "emoji":
+        slug = param
+        context.user_data["awaiting_category_emoji"] = slug
+        await query.edit_message_text(
+            "🎨 Отправь новый emoji для категории:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(text="Отмена", callback_data=f"categories:edit:{slug}")
+            ]]),
+        )
+        return
+
+    if action == "add":
+        context.user_data["awaiting_category_add"] = "name"
+        context.user_data.pop("pending_category_add", None)
+        await query.edit_message_text(
+            "➕ Введи название новой категории:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(text="Отмена", callback_data="nav:categories")
+            ]]),
+        )
+        return
+
+    if action == "set_type":
+        cat_type = param
+        pending = context.user_data.get("pending_category_add", {})
+        name_ru = pending.get("name_ru", "")
+        emoji = pending.get("emoji", "")
+        if not name_ru or not emoji:
+            await query.edit_message_text("❌ Что-то пошло не так. Попробуй снова.")
+            return
+        context.user_data.pop("pending_category_add", None)
+        context.user_data.pop("awaiting_category_add", None)
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = CategoryService(db)
+            svc.ensure_seeded(user_id)
+            try:
+                cat = svc.add_custom(user_id, name_ru, emoji, cat_type)
+            except ValueError as e:
+                await query.edit_message_text(f"❌ {e}")
+                return
+        await query.edit_message_text(f"✅ Категория «{cat.emoji} {cat.name_ru}» создана!")
+        return
+
+    if action == "delete":
+        slug = param
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = CategoryService(db)
+            svc.ensure_seeded(user_id)
+            cat = svc._repo.get_by_slug(user_id, slug)
+            if cat is None or not cat.is_custom:
+                await query.edit_message_text("❌ Нельзя удалить системную категорию.")
+                return
+            count = svc.count_transactions(user_id, slug)
+            if count > 0:
+                groups = svc.list_categories(user_id)
+                compatible = [
+                    c
+                    for cats in groups.values()
+                    for c in cats
+                    if c.slug != slug and (c.type == cat.type or c.type == "both" or cat.type == "both")
+                ]
+        if count > 0:
+            await query.edit_message_text(
+                f"⚠️ В категории «{cat.name_ru}» есть {count} транзакций.\n"
+                f"Куда перенести их перед удалением?",
+                reply_markup=category_reassign_keyboard(compatible, slug),
+            )
+        else:
+            await query.edit_message_text(
+                f"Удалить категорию «{cat.emoji} {cat.name_ru}»? Это нельзя отменить.",
+                reply_markup=category_delete_confirm_keyboard(slug),
+            )
+        return
+
+    if action == "confirm_delete":
+        # Only reached when transaction count == 0 — safe no-op UPDATE
+        slug = param
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = CategoryService(db)
+            svc.ensure_seeded(user_id)
+            try:
+                svc.delete_custom(user_id, slug, reassign_to_slug="other")
+            except ValueError as e:
+                await query.edit_message_text(f"❌ {e}")
+                return
+        await query.edit_message_text("✅ Категория удалена.")
+        return
+
+    if action == "reassign":
+        if "__" not in param:
+            await query.edit_message_text("❌ Неверный формат.")
+            return
+        from_slug, to_slug = param.split("__", 1)
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = CategoryService(db)
+            svc.ensure_seeded(user_id)
+            try:
+                svc.delete_custom(user_id, from_slug, to_slug)
+            except ValueError as e:
+                await query.edit_message_text(f"❌ {e}")
+                return
+        await query.edit_message_text("✅ Транзакции перенесены, категория удалена.")
+        return
+
+
 def build_application() -> Application:
     configure_logging()
     settings = get_settings()
@@ -271,6 +434,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(lowconf_callback_handler, pattern=r"^lowconf:"))
     application.add_handler(CallbackQueryHandler(planned_callback_handler, pattern=r"^planned:"))
     application.add_handler(CallbackQueryHandler(catfix_callback_handler,  pattern=r"^catfix:"))
+    application.add_handler(CallbackQueryHandler(categories_callback_handler, pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
@@ -371,7 +535,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         user = user_repo.get_by_telegram_id(update.effective_user.id)
 
     if user is None:
-        await update.effective_message.reply_text("Ошибка: пользователь не найден.")
+        await update.effective_message.reply_text("❌ Не нашёл пользователя.")
         return
 
     lines = [
@@ -401,7 +565,7 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         items = svc.list_recent_for_delete(update.effective_user.id, limit=5)
 
     if not items:
-        await update.effective_message.reply_text("Записей для редактирования нет.")
+        await update.effective_message.reply_text("📭 Записей для редактирования нет.")
         return
 
     await update.effective_message.reply_text(
@@ -431,7 +595,7 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             svc = TransactionService(db)
             items = svc.list_recent_for_delete(user_id, limit=5)
         if not items:
-            await query.edit_message_text("Записей нет.")
+            await query.edit_message_text("📭 Записей нет.")
             return
         await query.edit_message_text(
             "✏️ Выбери запись для редактирования:",
@@ -446,7 +610,7 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             items = svc.list_recent_for_delete(user_id, limit=20)
             tx = next((i for i in items if i["id"] == tx_id), None)
         if tx is None:
-            await query.edit_message_text("Запись не найдена.")
+            await query.edit_message_text("❌ Не нашёл запись.")
             return
         sign  = "↗" if tx["type"] == "income" else "↘"
         label = formatter.category_label(tx["category"])
@@ -461,9 +625,9 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             svc = TransactionService(db)
             deleted = svc.delete_transaction(user_id, UUID(tx_id))
         if deleted:
-            await query.edit_message_text("🗑 Запись удалена.")
+            await query.edit_message_text("✅ Удалил запись.")
         else:
-            await query.edit_message_text("Запись не найдена или уже удалена.")
+            await query.edit_message_text("❌ Не нашёл запись. Возможно, она уже удалена.")
         return
 
     if action == "type":
@@ -475,7 +639,7 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             items = svc.list_recent_for_delete(user_id, limit=20)
             tx = next((i for i in items if i["id"] == tx_id), None)
             if tx is None:
-                await query.edit_message_text("Запись не найдена.")
+                await query.edit_message_text("❌ Не нашёл запись.")
                 return
             new_type = "income" if tx["type"] == "expense" else "expense"
             svc.update_transaction(user_id, UUID(tx_id), TransactionUpdateRequest(type=new_type))
@@ -979,59 +1143,64 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     extra   = parts[3] if len(parts) > 3 else ""
     user_id = update.effective_user.id
 
-    with SessionLocal() as db:
-        nav = NavService(db)
+    try:
+        with SessionLocal() as db:
+            nav = NavService(db)
 
-        if section == "balance":
-            period = sub if sub in ("today", "week", "month", "all") else "month"
-            screen = nav.balance_screen(user_id, period)
-        elif section == "stats":
-            period = sub if sub in ("today", "week", "month", "all") else "month"
-            screen = nav.stats_screen(user_id, period)
-        elif section == "ops":
-            if sub in ("today", "week", "month", "all"):
-                screen = nav.operations_screen(user_id, sub)
-            elif sub == "delete_mode":
-                period = extra if extra in ("today", "week", "month", "all") else "month"
-                screen = nav.operations_delete_screen(user_id, period)
-            elif sub == "del" and extra:
-                uuid_str = extra
-                period_after = parts[4] if len(parts) > 4 else "month"
-                from uuid import UUID
-                from app.services.transaction_service import TransactionService
-                tx_svc = TransactionService(db)
-                tx_svc.delete_transaction(user_id, UUID(uuid_str))
-                screen = nav.operations_screen(user_id, period_after)
+            if section == "balance":
+                period = sub if sub in ("today", "week", "month", "all") else "month"
+                screen = nav.balance_screen(user_id, period)
+            elif section == "stats":
+                period = sub if sub in ("today", "week", "month", "all") else "month"
+                screen = nav.stats_screen(user_id, period)
+            elif section == "ops":
+                if sub in ("today", "week", "month", "all"):
+                    screen = nav.operations_screen(user_id, sub)
+                elif sub == "delete_mode":
+                    period = extra if extra in ("today", "week", "month", "all") else "month"
+                    screen = nav.operations_delete_screen(user_id, period)
+                elif sub == "del" and extra:
+                    uuid_str = extra
+                    period_after = parts[4] if len(parts) > 4 else "month"
+                    from uuid import UUID
+                    from app.services.transaction_service import TransactionService
+                    tx_svc = TransactionService(db)
+                    tx_svc.delete_transaction(user_id, UUID(uuid_str))
+                    screen = nav.operations_screen(user_id, period_after)
+                else:
+                    screen = nav.operations_screen(user_id, "month")
+            elif section == "planned":
+                screen = nav.planned_screen(user_id)
+            elif section == "recurring":
+                screen = nav.recurring_screen(user_id)
+            elif section == "budgets":
+                screen = nav.budgets_screen(user_id)
+            elif section == "settings":
+                screen = nav.settings_screen(user_id)
+            elif section == "categories":
+                screen = nav.categories_screen(user_id)
+            elif section == "help":
+                screen = nav.help_screen()
+            elif section == "menu":
+                try:
+                    await query.edit_message_text(
+                        formatter.format_main_menu_screen(),
+                        reply_markup=main_menu_inline_keyboard(),
+                    )
+                except BadRequest:
+                    await update.effective_chat.send_message(
+                        formatter.format_main_menu_screen(),
+                        reply_markup=main_menu_inline_keyboard(),
+                    )
+                return
             else:
-                screen = nav.operations_screen(user_id, "month")
-        elif section == "cats":
-            if sub == "income":
-                screen = nav.categories_type_screen(user_id, "income")
-            elif sub == "expense":
-                screen = nav.categories_type_screen(user_id, "expense")
-            else:
-                screen = nav.categories_screen()
-        elif section == "settings":
-            screen = nav.settings_screen(user_id)
-        elif section == "help":
-            screen = nav.help_screen()
-        elif section == "menu":
-            try:
-                await query.edit_message_text(
-                    formatter.format_main_menu_screen(),
-                    reply_markup=main_menu_inline_keyboard(),
-                )
-            except BadRequest:
-                await update.effective_chat.send_message(
-                    formatter.format_main_menu_screen(),
-                    reply_markup=main_menu_inline_keyboard(),
-                )
-            return
-        else:
-            logger.warning("unknown nav section: %s", section)
-            return
+                logger.warning("unknown nav section: %s", section)
+                return
 
-    await _nav_send_or_edit(query, update, screen)
+        await _nav_send_or_edit(query, update, screen)
+    except Exception as exc:
+        logger.exception("nav_callback error section=%s: %s", section, exc)
+        await update.effective_chat.send_message("❌ Ошибка при открытии раздела. Попробуй ещё раз.")
 
 
 # ---------------------------------------------------------------------------
@@ -1045,7 +1214,7 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user = user_repo.get_by_telegram_id(update.effective_user.id)
 
         if user is None:
-            await update.effective_message.reply_text("Ошибка: пользователь не найден.")
+            await update.effective_message.reply_text("❌ Не нашёл пользователя.")
             return
 
         if not context.args or len(context.args) == 0:
@@ -1378,6 +1547,73 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.effective_message.reply_text(response["message"])
         return
 
+    # --- Category: rename ---
+    awaiting_rename = context.user_data.get("awaiting_category_rename") if context.user_data else None
+    if awaiting_rename:
+        del context.user_data["awaiting_category_rename"]
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            from app.services.category_service import CategoryService
+            svc = CategoryService(db)
+            svc.ensure_seeded(update.effective_user.id)
+            cat = svc.rename(update.effective_user.id, awaiting_rename, text.strip())
+        if cat:
+            await update.effective_message.reply_text(
+                f"✅ Переименовано: {cat.emoji} {cat.name_ru}"
+            )
+        else:
+            await update.effective_message.reply_text("❌ Категория не найдена.")
+        return
+
+    # --- Category: change emoji ---
+    awaiting_emoji = context.user_data.get("awaiting_category_emoji") if context.user_data else None
+    if awaiting_emoji:
+        del context.user_data["awaiting_category_emoji"]
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            from app.services.category_service import CategoryService
+            svc = CategoryService(db)
+            svc.ensure_seeded(update.effective_user.id)
+            try:
+                cat = svc.change_emoji(update.effective_user.id, awaiting_emoji, text.strip())
+            except ValueError as e:
+                await update.effective_message.reply_text(f"❌ {e} Попробуй ещё раз.")
+                context.user_data["awaiting_category_emoji"] = awaiting_emoji
+                return
+        if cat:
+            await update.effective_message.reply_text(f"✅ Emoji обновлён: {cat.emoji} {cat.name_ru}")
+        else:
+            await update.effective_message.reply_text("❌ Категория не найдена.")
+        return
+
+    # --- Category: add (name or emoji step) ---
+    awaiting_add = context.user_data.get("awaiting_category_add") if context.user_data else None
+    if awaiting_add == "name":
+        context.user_data["awaiting_category_add"] = "emoji"
+        context.user_data["pending_category_add"] = {"name_ru": text.strip(), "emoji": ""}
+        await update.effective_message.reply_text(
+            f"Название: «{text.strip()}»\n\nТеперь отправь emoji для этой категории:"
+        )
+        return
+    if awaiting_add == "emoji":
+        from app.services.category_service import _is_emoji
+        emoji_input = text.strip()
+        if not _is_emoji(emoji_input):
+            await update.effective_message.reply_text(
+                "❌ Не похоже на emoji. Попробуй ещё раз (например: 🏋 или ⚽):"
+            )
+            return
+        pending = context.user_data.get("pending_category_add", {})
+        pending["emoji"] = emoji_input
+        context.user_data["pending_category_add"] = pending
+        del context.user_data["awaiting_category_add"]
+        from app.telegram.keyboards import category_type_keyboard
+        await update.effective_message.reply_text(
+            f"Emoji: {emoji_input}\n\nВыбери тип категории:",
+            reply_markup=category_type_keyboard(),
+        )
+        return
+
     awaiting_recurring_amount = context.user_data.get("awaiting_recurring_amount") if context.user_data else None
     if awaiting_recurring_amount:
         del context.user_data["awaiting_recurring_amount"]
@@ -1521,7 +1757,6 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # Real-time insight (max once per day, silent on error)
         try:
             from app.services.insight_service import InsightService
-            from app.repositories.user_repository import UserRepository
             with SessionLocal() as insight_db:
                 user_obj = UserRepository(insight_db).get_by_telegram_id(
                     update.effective_user.id
@@ -1715,7 +1950,7 @@ def _handle_settings_input(telegram_user_id: int, setting: str, value: str) -> s
         user_repo = UserRepository(db)
         user = user_repo.get_by_telegram_id(telegram_user_id)
         if user is None:
-            return "Ошибка: пользователь не найден."
+            return "❌ Не нашёл пользователя."
 
         if setting == "budget":
             try:
