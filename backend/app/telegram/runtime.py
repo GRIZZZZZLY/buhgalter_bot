@@ -1620,11 +1620,198 @@ async def settings_callback_handler(update: Update, context: ContextTypes.DEFAUL
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Free-form input handlers (planned / recurring)
+# ---------------------------------------------------------------------------
+
+async def _handle_planned_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    """Process free-form text as a planned expense via LLM extraction."""
+    from datetime import date as _date
+    from app.services.category_service import CategoryService
+    from app.services.llm_service import LLMService
+    from app.telegram.keyboards import planned_confirm_keyboard
+
+    user_id = update.effective_user.id
+
+    with SessionLocal() as db:
+        cat_svc = CategoryService(db)
+        cat_svc.ensure_seeded(user_id)
+        categories_grouped = cat_svc.list_categories(user_id)
+        user_categories = [
+            {"slug": c.slug, "name_ru": c.name_ru}
+            for group in categories_grouped.values()
+            for c in group
+        ]
+        llm = LLMService(db)
+        result = llm.extract_planned(text, user_categories)
+
+    # Clear mode — from this point, new text is a regular transaction
+    if context.user_data:
+        context.user_data.pop("mode", None)
+
+    if result is None:
+        await update.effective_message.reply_text(
+            "❌ Не смог разобрать. Попробуй ещё раз."
+        )
+        return
+
+    planned_date_iso = result.get("planned_date_iso")
+    if not planned_date_iso:
+        await update.effective_message.reply_text(
+            "❌ Не понял дату. Укажи, например: «15 апреля» или «через 2 недели»."
+        )
+        return
+
+    try:
+        planned_date = _date.fromisoformat(planned_date_iso)
+    except ValueError:
+        await update.effective_message.reply_text(
+            "❌ Не понял дату. Укажи, например: «15 апреля» или «через 2 недели»."
+        )
+        return
+
+    if planned_date < _date.today():
+        await update.effective_message.reply_text(
+            "❌ Дата уже прошла. Укажи будущую дату."
+        )
+        return
+
+    # Validate category slug — fallback to "other"
+    valid_slugs = {c["slug"] for c in user_categories}
+    category_slug = result.get("category_slug") or "other"
+    if category_slug not in valid_slugs:
+        category_slug = "other"
+
+    title = result.get("title") or ""
+    amount = float(result.get("amount") or 0)
+
+    if context.user_data is not None:
+        context.user_data["pending_planned"] = {
+            "title": title,
+            "amount": amount,
+            "category": category_slug,
+            "planned_date": planned_date_iso,
+        }
+
+    cat_label = formatter.category_label(category_slug)
+    msg = (
+        "Запланировал:\n"
+        f"🏷 {title}\n"
+        f"💰 {amount:,.0f} ₽\n"
+        f"📅 {planned_date_iso}\n"
+        f"🗂 {cat_label}"
+    )
+    await update.effective_message.reply_text(msg, reply_markup=planned_confirm_keyboard())
+
+
+async def _handle_recurring_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    """Process free-form text as a recurring transaction via LLM extraction."""
+    from app.services.category_service import CategoryService
+    from app.services.llm_service import LLMService
+    from app.telegram.keyboards import recurring_confirm_keyboard
+
+    user_id = update.effective_user.id
+
+    with SessionLocal() as db:
+        cat_svc = CategoryService(db)
+        cat_svc.ensure_seeded(user_id)
+        categories_grouped = cat_svc.list_categories(user_id)
+        user_categories = [
+            {"slug": c.slug, "name_ru": c.name_ru}
+            for group in categories_grouped.values()
+            for c in group
+        ]
+        llm = LLMService(db)
+        result = llm.extract_recurring(text, user_categories)
+
+    # Clear mode
+    if context.user_data:
+        context.user_data.pop("mode", None)
+
+    if result is None:
+        await update.effective_message.reply_text(
+            "❌ Не смог разобрать. Попробуй ещё раз."
+        )
+        return
+
+    required_keys = ("title", "amount", "transaction_type", "category_slug", "frequency", "day_value")
+    missing = [k for k in required_keys if result.get(k) is None]
+    if missing:
+        await update.effective_message.reply_text(
+            f"❌ Не понял: {', '.join(missing)}. Попробуй ещё раз."
+        )
+        return
+
+    # Validate category slug — fallback to "other"
+    valid_slugs = {c["slug"] for c in user_categories}
+    category_slug = result.get("category_slug") or "other"
+    if category_slug not in valid_slugs:
+        category_slug = "other"
+
+    tx_type = result.get("transaction_type", "expense")
+    if tx_type not in ("income", "expense"):
+        tx_type = "expense"
+
+    title = result.get("title") or ""
+    amount = float(result.get("amount") or 0)
+    frequency = result.get("frequency", "monthly")
+    day_value = int(result.get("day_value") or 1)
+
+    if context.user_data is not None:
+        context.user_data["pending_recurring"] = {
+            "title": title,
+            "amount": amount,
+            "transaction_type": tx_type,
+            "category": category_slug,
+            "frequency": frequency,
+            "day_value": day_value,
+        }
+
+    sign = "+" if tx_type == "income" else "−"
+    cat_label = formatter.category_label(category_slug)
+    _weekday_labels = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+    if frequency == "daily":
+        freq_label = "каждый день"
+    elif frequency == "interval_days":
+        freq_label = f"каждые {day_value} дн."
+    elif frequency == "weekly":
+        wl = _weekday_labels[day_value] if 0 <= day_value <= 6 else "?"
+        freq_label = f"каждую неделю ({wl})"
+    else:
+        freq_label = f"каждый месяц, {day_value}-го"
+
+    msg = (
+        "Регулярный платёж:\n"
+        f"🏷 {title}\n"
+        f"💰 {sign}{amount:,.0f} ₽\n"
+        f"📅 {freq_label.capitalize()}\n"
+        f"🗂 {cat_label}"
+    )
+    await update.effective_message.reply_text(msg, reply_markup=recurring_confirm_keyboard())
+
+
 # Text message handler
 # ---------------------------------------------------------------------------
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.effective_message.text or ""
+
+    # Handle input modes (planned/recurring free-form input)
+    mode = context.user_data.get("mode") if context.user_data else None
+    if mode == "planned_input":
+        await _handle_planned_input(update, context, text.strip())
+        return
+    if mode == "recurring_input":
+        await _handle_recurring_input(update, context, text.strip())
+        return
 
     # Handle settings input
     awaiting = context.user_data.get("awaiting_setting") if context.user_data else None
@@ -1971,6 +2158,40 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     os.close(fd)
     Path(temp_path).unlink(missing_ok=True)
     await telegram_file.download_to_drive(custom_path=temp_path)
+
+    # Handle input modes via STT
+    mode = context.user_data.get("mode") if context.user_data else None
+    if mode in ("planned_input", "recurring_input"):
+        try:
+            from app.services.audio_file_service import AudioFileService
+            from app.services.stt_service import STTService
+            audio_svc = AudioFileService()
+            wav_path = audio_svc.prepare_wav_from_ogg(temp_path)
+            stt = STTService()
+            stt_result = stt.transcribe(wav_path)
+            transcribed = stt_result.text or ""
+            if transcribed:
+                if mode == "planned_input":
+                    await _handle_planned_input(update, context, transcribed)
+                else:
+                    await _handle_recurring_input(update, context, transcribed)
+            else:
+                await update.effective_message.reply_text(
+                    "❌ Не удалось распознать речь. Попробуй ещё раз."
+                )
+        except Exception as exc:
+            logger.error("voice mode input error: %s", exc)
+            await update.effective_message.reply_text(
+                "❌ Не смог обработать голосовое. Попробуй ещё раз."
+            )
+        finally:
+            from pathlib import Path as _Path
+            _Path(temp_path).unlink(missing_ok=True)
+            try:
+                await placeholder.delete()
+            except Exception:
+                pass
+        return
 
     try:
         with SessionLocal() as db:
