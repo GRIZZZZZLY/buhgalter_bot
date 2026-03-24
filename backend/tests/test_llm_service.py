@@ -193,3 +193,64 @@ def test_http_error_raises(db_session):
         svc._client = mock_client
         with pytest.raises(LLMUnavailableError):
             svc.process("купил что-то", telegram_user_id=1)
+
+
+# ---------------------------------------------------------------------------
+# extract_planned tests
+# ---------------------------------------------------------------------------
+
+
+def test_extract_planned_returns_dict_on_valid_json():
+    payload = json.dumps({
+        "title": "Стоматолог",
+        "amount": 8000.0,
+        "category_slug": "health",
+        "planned_date_iso": "2026-04-22",
+    })
+    svc = _make_service(mock_response_content=payload)
+    user_categories = [{"slug": "health", "name_ru": "Здоровье"}, {"slug": "other", "name_ru": "Прочее"}]
+    result = svc.extract_planned("стоматолог 8000 22 апреля", user_categories)
+    assert result is not None
+    assert result["title"] == "Стоматолог"
+    assert result["amount"] == 8000.0
+    assert result["category_slug"] == "health"
+    assert result["planned_date_iso"] == "2026-04-22"
+
+
+def test_extract_planned_returns_none_on_api_error():
+    svc = _make_service(mock_response_content="{}")
+    svc._client.chat.completions.create.side_effect = Exception("API down")
+    result = svc.extract_planned("маникюр 2100 завтра", [])
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# extract_recurring tests
+# ---------------------------------------------------------------------------
+
+
+def test_extract_recurring_returns_dict_on_valid_json():
+    payload = json.dumps({
+        "title": "Netflix",
+        "amount": 799.0,
+        "transaction_type": "expense",
+        "category_slug": "subscriptions",
+        "frequency": "monthly",
+        "day_value": 15,
+    })
+    svc = _make_service(mock_response_content=payload)
+    user_categories = [{"slug": "subscriptions", "name_ru": "Подписки"}, {"slug": "other", "name_ru": "Прочее"}]
+    result = svc.extract_recurring("Netflix 799 каждый месяц 15", user_categories)
+    assert result is not None
+    assert result["title"] == "Netflix"
+    assert result["amount"] == 799.0
+    assert result["transaction_type"] == "expense"
+    assert result["frequency"] == "monthly"
+    assert result["day_value"] == 15
+
+
+def test_extract_recurring_returns_none_on_api_error():
+    svc = _make_service(mock_response_content="{}")
+    svc._client.chat.completions.create.side_effect = Exception("timeout")
+    result = svc.extract_recurring("аренда 30000 каждый месяц 1", [])
+    assert result is None

@@ -59,8 +59,8 @@ class LLMService:
         self.db = db
         settings = get_settings()
         self._client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.openrouter_api_key,
+            base_url="https://api.groq.com/openai/v1",
+            api_key=settings.groq_api_key,
             timeout=60.0,
         )
         self._model = settings.llm_model
@@ -92,6 +92,87 @@ class LLMService:
 
         raw = response.choices[0].message.content or ""
         return self._parse_response(raw, text)
+
+    def extract_planned(self, text: str, user_categories: list[dict]) -> dict | None:
+        """Extract planned expense fields from free-form text.
+
+        Args:
+            text: user message (already transcribed if voice)
+            user_categories: list of {"slug": str, "name_ru": str}
+
+        Returns:
+            dict with keys title, amount, category_slug, planned_date_iso — or None on error.
+        """
+        category_lines = "\n".join(
+            f"- {c['slug']}: {c['name_ru']}" for c in user_categories
+        ) or "- other: Прочее"
+        today = date.today().isoformat()
+        system = (
+            f"Ты ассистент для извлечения данных. Сегодня {today}.\n"
+            "Извлеки параметры запланированного расхода из текста.\n"
+            'Верни JSON: {"title": str, "amount": float, "category_slug": str, "planned_date_iso": str | null}\n'
+            f"Категории пользователя (используй только эти slug):\n{category_lines}\n"
+            'planned_date_iso: дата ISO "YYYY-MM-DD", null если не упомянута.\n'
+            'Если категория не ясна — "other".'
+        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": text},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+            raw = response.choices[0].message.content or ""
+            return json.loads(raw)
+        except Exception as exc:
+            logger.error("extract_planned error: %s", exc)
+            return None
+
+    def extract_recurring(self, text: str, user_categories: list[dict]) -> dict | None:
+        """Extract recurring transaction fields from free-form text.
+
+        Args:
+            text: user message (already transcribed if voice)
+            user_categories: list of {"slug": str, "name_ru": str}
+
+        Returns:
+            dict with keys title, amount, transaction_type, category_slug, frequency, day_value
+            — or None on error.
+        """
+        category_lines = "\n".join(
+            f"- {c['slug']}: {c['name_ru']}" for c in user_categories
+        ) or "- other: Прочее"
+        system = (
+            "Ты ассистент для извлечения данных.\n"
+            "Извлеки параметры регулярного платежа из текста.\n"
+            'Верни JSON: {"title": str, "amount": float, '
+            '"transaction_type": "expense"|"income", "category_slug": str, '
+            '"frequency": "monthly"|"weekly"|"daily"|"interval_days", "day_value": int}\n'
+            f"Категории пользователя (используй только эти slug):\n{category_lines}\n"
+            "monthly: day_value = день месяца (1-28).\n"
+            "weekly: day_value = день недели (0=пн...6=вс).\n"
+            "interval_days: day_value = количество дней.\n"
+            "daily: day_value = 1.\n"
+            'Если тип (расход/доход) не ясен — "expense". Если категория не ясна — "other".'
+        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": text},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+            raw = response.choices[0].message.content or ""
+            return json.loads(raw)
+        except Exception as exc:
+            logger.error("extract_recurring error: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Internal helpers
