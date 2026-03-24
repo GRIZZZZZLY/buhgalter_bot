@@ -51,21 +51,102 @@ def _back_btn(target: str = "nav:menu") -> InlineKeyboardButton:
 # Main menu — inline keyboard
 # ---------------------------------------------------------------------------
 
-MENU_BTN_BALANCE  = "💰 Баланс"
-MENU_BTN_STATS    = "📊 Статистика"
 MENU_BTN_OPS      = "📋 Операции"
-MENU_BTN_CATS     = "📂 Категории"
+MENU_BTN_PLANNED  = "📌 Запланированное"
+MENU_BTN_RECURRING = "🔁 Регулярное"
+MENU_BTN_BUDGETS  = "💰 Бюджеты"
 MENU_BTN_SETTINGS = "⚙️ Настройки"
 MENU_BTN_HELP     = "ℹ️ Помощь"
+MENU_BTN_CATEGORIES = "🗂 Категории"
 
 
 def main_menu_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [_btn(MENU_BTN_BALANCE, "nav:balance"), _btn(MENU_BTN_STATS, "nav:stats")],
-        [_btn(MENU_BTN_OPS, "nav:ops")],
-        [_btn(MENU_BTN_CATS, "nav:cats"), _btn(MENU_BTN_SETTINGS, "nav:settings")],
-        [_btn(MENU_BTN_HELP, "nav:help")],
+        [_btn("📊 Сводка", "nav:stats")],
+        [_btn(MENU_BTN_PLANNED, "nav:planned"), _btn(MENU_BTN_RECURRING, "nav:recurring")],
+        [_btn(MENU_BTN_BUDGETS, "nav:budgets"), _btn(MENU_BTN_CATEGORIES, "nav:categories")],
+        [_btn(MENU_BTN_SETTINGS, "nav:settings"), _btn(MENU_BTN_HELP, "nav:help")],
     ])
+
+
+def planned_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[_menu_btn()]])
+
+
+def recurring_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[_menu_btn()]])
+
+
+def categories_nav_keyboard(categories_by_type: dict) -> InlineKeyboardMarkup:
+    """Per-category row: emoji+name button (noop) + ✏️ + optional 🗑."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for group_type in ("expense", "income", "both"):
+        for cat in categories_by_type.get(group_type, []):
+            row = [
+                _btn(f"{cat.emoji} {cat.name_ru}", f"categories:noop:{cat.slug}"),
+                _btn("✏️", f"categories:edit:{cat.slug}"),
+            ]
+            if cat.is_custom:
+                row.append(_btn("🗑", f"categories:delete:{cat.slug}"))
+            rows.append(row)
+    rows.append([_btn("➕ Добавить", "categories:add"), _back_btn()])
+    return InlineKeyboardMarkup(rows)
+
+
+def category_edit_keyboard(slug: str, is_custom: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [_btn("✏️ Изменить название", f"categories:rename:{slug}")],
+        [_btn("🎨 Изменить emoji", f"categories:emoji:{slug}")],
+    ]
+    if is_custom:
+        rows.append([_btn("🗑 Удалить", f"categories:delete:{slug}")])
+    rows.append([_back_btn("nav:categories")])
+    return InlineKeyboardMarkup(rows)
+
+
+def category_type_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            _btn("💸 Расход", "categories:set_type:expense"),
+            _btn("💰 Доход", "categories:set_type:income"),
+            _btn("↔️ Оба", "categories:set_type:both"),
+        ],
+        [_back_btn("nav:categories")],
+    ])
+
+
+def category_reassign_keyboard(categories: list, deleting_slug: str) -> InlineKeyboardMarkup:
+    """List of same-type categories to reassign transactions to before deletion."""
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for cat in categories:
+        if cat.slug == deleting_slug:
+            continue
+        btn = _btn(
+            f"{cat.emoji} {cat.name_ru}",
+            f"categories:reassign:{deleting_slug}__{cat.slug}",
+        )
+        row.append(btn)
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([_btn("❌ Отмена", "nav:categories")])
+    return InlineKeyboardMarkup(rows)
+
+
+def category_delete_confirm_keyboard(slug: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            _btn("✅ Да, удалить", f"categories:confirm_delete:{slug}"),
+            _btn("Отмена", "nav:categories"),
+        ]
+    ])
+
+
+def budgets_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[_menu_btn()]])
 
 
 # ---------------------------------------------------------------------------
@@ -90,14 +171,14 @@ def balance_inline_keyboard(period: str = "month") -> InlineKeyboardMarkup:
 def stats_inline_keyboard(period: str = "month") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         _period_row("stats", period),
-        [_btn("💰 Баланс", "nav:balance"), _menu_btn()],
+        [_btn("📋 Операции", f"nav:ops:{period}"), _menu_btn()],
     ])
 
 
 def operations_inline_keyboard(period: str = "month") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         _period_row("ops", period),
-        [_btn("🗑 Удалить", "nav:ops:delete_mode"), _menu_btn()],
+        [_btn("🗑 Удалить", f"nav:ops:delete_mode:{period}"), _btn("📊 Сводка", f"nav:stats:{period}"), _menu_btn()],
     ])
 
 
@@ -260,6 +341,33 @@ def low_confidence_category_keyboard(tx_type: str, amount: str) -> InlineKeyboar
 
 
 # ---------------------------------------------------------------------------
+# Planned expenses
+# ---------------------------------------------------------------------------
+
+def planned_expense_due_keyboard(planned_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            _btn("✅ Учесть", f"planned:confirm:{planned_id}"),
+            _btn("✏️ Изменить сумму и учесть", f"planned:edit_amount:{planned_id}"),
+        ],
+        [_btn("📅 Изменить дату", f"planned:edit_date:{planned_id}"), _btn("❌ Отменить", f"planned:cancel:{planned_id}")],
+    ])
+
+
+def planned_manage_keyboard(planned_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            _btn("✅ Учесть", f"planned:confirm:{planned_id}"),
+            _btn("✏️ Учесть с другой суммой", f"planned:edit_amount:{planned_id}"),
+        ],
+        [
+            _btn("📅 Изменить дату", f"planned:edit_date:{planned_id}"),
+            _btn("🗑 Удалить", f"planned:cancel:{planned_id}"),
+        ],
+    ])
+
+
+# ---------------------------------------------------------------------------
 # Evening check-in — quick category + amount inline
 # ---------------------------------------------------------------------------
 
@@ -403,6 +511,33 @@ def category_grid_keyboard(transaction_id: str, categories: list[str]) -> Inline
     ]
     rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
     rows.append([InlineKeyboardButton("❌ Отмена", callback_data=f"catfix:cancel:{transaction_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+# ---------------------------------------------------------------------------
+# Recurring management
+# ---------------------------------------------------------------------------
+
+def recurring_manage_keyboard(recurring_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            _btn("💰 Изменить сумму", f"recurring:amount:{recurring_id}"),
+            _btn("📅 Изменить период", f"recurring:schedule:{recurring_id}"),
+        ],
+        [
+            _btn("📂 Изменить категорию", f"recurring:category:{recurring_id}"),
+            _btn("⏸ Отключить", f"recurring:disable:{recurring_id}"),
+        ],
+    ])
+
+
+def recurring_category_keyboard(recurring_id: int, categories: list[str]) -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(formatter.category_label(slug), callback_data=f"recurring:set_category:{recurring_id}:{slug}")
+        for slug in categories
+    ]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([InlineKeyboardButton("❌ Отмена", callback_data=f"recurring:cancel:{recurring_id}")])
     return InlineKeyboardMarkup(rows)
 
 
