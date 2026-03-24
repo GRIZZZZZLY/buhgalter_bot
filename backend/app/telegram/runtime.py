@@ -135,6 +135,19 @@ _CATFIX_CATEGORIES = [
 ]
 
 
+def _format_recurring_schedule(rt) -> str:
+    """Format schedule label for a RecurringTransaction object."""
+    _weekday_labels = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+    if rt.frequency == "daily":
+        return "каждый день"
+    if rt.frequency == "interval_days":
+        return f"каждые {rt.day_value} дн."
+    if rt.frequency == "weekly":
+        label = _weekday_labels[rt.day_value] if 0 <= rt.day_value <= 6 else "?"
+        return f"каждую неделю ({label})"
+    return f"каждый месяц, {rt.day_value}-го"
+
+
 async def catfix_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None or query.data is None:
@@ -433,6 +446,8 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(catres_callback_handler,  pattern=r"^catres:"))
     application.add_handler(CallbackQueryHandler(lowconf_callback_handler, pattern=r"^lowconf:"))
     application.add_handler(CallbackQueryHandler(planned_callback_handler, pattern=r"^planned:"))
+    application.add_handler(CallbackQueryHandler(planned_input_callback_handler, pattern=r"^planned_input:"))
+    application.add_handler(CallbackQueryHandler(recurring_input_callback_handler, pattern=r"^recurring_input:"))
     application.add_handler(CallbackQueryHandler(catfix_callback_handler,  pattern=r"^catfix:"))
     application.add_handler(CallbackQueryHandler(categories_callback_handler, pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
@@ -1143,6 +1158,12 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     extra   = parts[3] if len(parts) > 3 else ""
     user_id = update.effective_user.id
 
+    # Clear any pending input mode on navigation
+    if context.user_data:
+        context.user_data.pop("mode", None)
+        context.user_data.pop("pending_planned", None)
+        context.user_data.pop("pending_recurring", None)
+
     try:
         with SessionLocal() as db:
             nav = NavService(db)
@@ -1169,10 +1190,36 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     screen = nav.operations_screen(user_id, period_after)
                 else:
                     screen = nav.operations_screen(user_id, "month")
-            elif section == "planned":
+            elif section == "planned_list":
                 screen = nav.planned_screen(user_id)
-            elif section == "recurring":
+            elif section == "recurring_list":
                 screen = nav.recurring_screen(user_id)
+            elif section == "planned_input":
+                # Re-set mode (was cleared above for other nav, re-set here for input sections)
+                context.user_data["mode"] = "planned_input"
+                from app.telegram.keyboards import planned_input_keyboard
+                try:
+                    await query.edit_message_text(
+                        "Опиши запланированный расход — название, сумму и дату.\n"
+                        "Например: «маникюр 2100 рублей 15 апреля»",
+                        reply_markup=planned_input_keyboard(),
+                    )
+                except BadRequest:
+                    pass
+                return
+            elif section == "recurring_input":
+                context.user_data["mode"] = "recurring_input"
+                from app.telegram.keyboards import recurring_input_keyboard
+                try:
+                    await query.edit_message_text(
+                        "Опиши регулярный платёж — название, сумму и периодичность.\n"
+                        "Например: «аренда 30000 каждый месяц 1 числа»\n"
+                        "          «зарплата 120000 каждый месяц 10 числа»",
+                        reply_markup=recurring_input_keyboard(),
+                    )
+                except BadRequest:
+                    pass
+                return
             elif section == "budgets":
                 screen = nav.budgets_screen(user_id)
             elif section == "settings":
@@ -1201,6 +1248,133 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as exc:
         logger.exception("nav_callback error section=%s: %s", section, exc)
         await update.effective_chat.send_message("❌ Ошибка при открытии раздела. Попробуй ещё раз.")
+
+
+async def planned_input_callback_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handles planned_input:confirm and planned_input:cancel."""
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    action = query.data.split(":")[1]  # "confirm" or "cancel"
+    user_id = update.effective_user.id
+
+    if action == "cancel":
+        if context.user_data:
+            context.user_data.pop("pending_planned", None)
+            context.user_data.pop("mode", None)
+        try:
+            await query.edit_message_text(
+                "Отменено.",
+                reply_markup=main_menu_inline_keyboard(),
+            )
+        except BadRequest:
+            pass
+        return
+
+    # confirm
+    pending = (context.user_data or {}).pop("pending_planned", None)
+    if not pending:
+        try:
+            await query.edit_message_text(
+                "❌ Данные устарели. Начни заново.",
+                reply_markup=main_menu_inline_keyboard(),
+            )
+        except BadRequest:
+            pass
+        return
+
+    from datetime import date as _date
+    from app.services.planned_expense_service import PlannedExpenseService
+
+    with SessionLocal() as db:
+        svc = PlannedExpenseService(db)
+        item = svc.create_manual(
+            telegram_user_id=user_id,
+            title=pending["title"],
+            amount=float(pending["amount"]),
+            category=pending["category"],
+            planned_date=_date.fromisoformat(pending["planned_date"]),
+        )
+
+    try:
+        await query.edit_message_text(
+            f"✅ Запланировано: {item.title} — {float(item.amount):,.0f} ₽ на {item.planned_date}",
+            reply_markup=main_menu_inline_keyboard(),
+        )
+    except BadRequest:
+        pass
+
+
+async def recurring_input_callback_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handles recurring_input:confirm and recurring_input:cancel."""
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    action = query.data.split(":")[1]  # "confirm" or "cancel"
+    user_id = update.effective_user.id
+
+    if action == "cancel":
+        if context.user_data:
+            context.user_data.pop("pending_recurring", None)
+            context.user_data.pop("mode", None)
+        try:
+            await query.edit_message_text(
+                "Отменено.",
+                reply_markup=main_menu_inline_keyboard(),
+            )
+        except BadRequest:
+            pass
+        return
+
+    # confirm
+    pending = (context.user_data or {}).pop("pending_recurring", None)
+    if not pending:
+        try:
+            await query.edit_message_text(
+                "❌ Данные устарели. Начни заново.",
+                reply_markup=main_menu_inline_keyboard(),
+            )
+        except BadRequest:
+            pass
+        return
+
+    from app.services.recurring_service import RecurringService
+
+    with SessionLocal() as db:
+        svc = RecurringService(db)
+        rt = svc.create(
+            telegram_user_id=user_id,
+            title=pending["title"],
+            amount=float(pending["amount"]),
+            transaction_type=pending["transaction_type"],
+            category=pending["category"],
+            frequency=pending["frequency"],
+            day_value=int(pending["day_value"]),
+        )
+
+    sign = "+" if rt.transaction_type == "income" else "−"
+    freq_label = _format_recurring_schedule(rt)
+    try:
+        await query.edit_message_text(
+            f"✅ Добавлено: {rt.title} {sign}{float(rt.amount):,.0f} ₽ — {freq_label}",
+            reply_markup=main_menu_inline_keyboard(),
+        )
+    except BadRequest:
+        pass
 
 
 # ---------------------------------------------------------------------------
