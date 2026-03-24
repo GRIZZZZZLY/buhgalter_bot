@@ -11,8 +11,8 @@ def test_main_menu_has_product_sections() -> None:
     labels = [button.text for row in kb.inline_keyboard for button in row]
 
     assert "📊 Сводка" in labels
-    assert "📌 Запланированное" in labels
-    assert "🔁 Регулярное" in labels
+    assert "📋 Запланированные" in labels
+    assert "🔄 Регулярные" in labels
     assert "💰 Бюджеты" in labels
     assert "⚙️ Настройки" in labels
     assert "ℹ️ Помощь" in labels

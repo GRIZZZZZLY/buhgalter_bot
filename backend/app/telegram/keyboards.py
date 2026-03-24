@@ -52,8 +52,8 @@ def _back_btn(target: str = "nav:menu") -> InlineKeyboardButton:
 # ---------------------------------------------------------------------------
 
 MENU_BTN_OPS      = "📋 Операции"
-MENU_BTN_PLANNED  = "📌 Запланированное"
-MENU_BTN_RECURRING = "🔁 Регулярное"
+MENU_BTN_PLANNED  = "📋 Запланированные"
+MENU_BTN_RECURRING = "🔄 Регулярные"
 MENU_BTN_BUDGETS  = "💰 Бюджеты"
 MENU_BTN_SETTINGS = "⚙️ Настройки"
 MENU_BTN_HELP     = "ℹ️ Помощь"
@@ -63,7 +63,7 @@ MENU_BTN_CATEGORIES = "🗂 Категории"
 def main_menu_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [_btn("📊 Сводка", "nav:stats")],
-        [_btn(MENU_BTN_PLANNED, "nav:planned"), _btn(MENU_BTN_RECURRING, "nav:recurring")],
+        [_btn(MENU_BTN_PLANNED, "nav:planned_input"), _btn(MENU_BTN_RECURRING, "nav:recurring_input")],
         [_btn(MENU_BTN_BUDGETS, "nav:budgets"), _btn(MENU_BTN_CATEGORIES, "nav:categories")],
         [_btn(MENU_BTN_SETTINGS, "nav:settings"), _btn(MENU_BTN_HELP, "nav:help")],
     ])
@@ -75,6 +75,38 @@ def planned_inline_keyboard() -> InlineKeyboardMarkup:
 
 def recurring_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[_menu_btn()]])
+
+
+def planned_input_keyboard() -> InlineKeyboardMarkup:
+    """Shown when entering planned input mode."""
+    return InlineKeyboardMarkup([
+        [_btn("📋 Мои запланированные", "nav:planned_list")],
+        [_back_btn("nav:menu")],
+    ])
+
+
+def recurring_input_keyboard() -> InlineKeyboardMarkup:
+    """Shown when entering recurring input mode."""
+    return InlineKeyboardMarkup([
+        [_btn("🔄 Мои регулярные", "nav:recurring_list")],
+        [_back_btn("nav:menu")],
+    ])
+
+
+def planned_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation keyboard after LLM extraction of planned expense."""
+    return InlineKeyboardMarkup([
+        [_btn("✅ Сохранить", "planned_input:confirm"),
+         _btn("❌ Отмена", "planned_input:cancel")],
+    ])
+
+
+def recurring_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation keyboard after LLM extraction of recurring transaction."""
+    return InlineKeyboardMarkup([
+        [_btn("✅ Сохранить", "recurring_input:confirm"),
+         _btn("❌ Отмена", "recurring_input:cancel")],
+    ])
 
 
 def categories_nav_keyboard(categories_by_type: dict) -> InlineKeyboardMarkup:
