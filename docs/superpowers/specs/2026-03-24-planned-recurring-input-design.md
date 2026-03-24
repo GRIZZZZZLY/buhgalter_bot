@@ -120,8 +120,13 @@
 
 ### `backend/app/telegram/keyboards.py`
 
-**Изменения в `main_menu_inline_keyboard()`:** добавить две кнопки:
+**Изменения в `main_menu_inline_keyboard()`:** существующие кнопки `nav:planned` и `nav:recurring` **заменяются** новыми (callback_data и текст меняются):
 ```python
+# Было:
+[_btn("📋 Запланированное", "nav:planned"),
+ _btn("🔄 Регулярное",      "nav:recurring")]
+
+# Стало:
 [_btn("📋 Запланированные", "nav:planned_input"),
  _btn("🔄 Регулярные",      "nav:recurring_input")]
 ```
@@ -130,16 +135,16 @@
 
 ```python
 def planned_confirm_keyboard() -> InlineKeyboardMarkup:
-    """[✅ Сохранить] [❌ Отмена]"""
+    """[✅ Сохранить → planned_input:confirm] [❌ Отмена → planned_input:cancel]"""
 
 def recurring_confirm_keyboard() -> InlineKeyboardMarkup:
-    """[✅ Сохранить] [❌ Отмена]"""
+    """[✅ Сохранить → recurring_input:confirm] [❌ Отмена → recurring_input:cancel]"""
 
 def planned_input_keyboard() -> InlineKeyboardMarkup:
-    """[📋 Мои запланированные] [← Назад]"""
+    """[📋 Мои запланированные → nav:planned_list] [← Назад → nav:main]"""
 
 def recurring_input_keyboard() -> InlineKeyboardMarkup:
-    """[🔄 Мои регулярные] [← Назад]"""
+    """[🔄 Мои регулярные → nav:recurring_list] [← Назад → nav:main]"""
 ```
 
 ### `backend/app/telegram/runtime.py`
@@ -150,12 +155,12 @@ def recurring_input_keyboard() -> InlineKeyboardMarkup:
 |---|---|
 | `nav:planned_input` | установить `mode = "planned_input"`, показать подсказку с `planned_input_keyboard()` |
 | `nav:recurring_input` | установить `mode = "recurring_input"`, показать подсказку с `recurring_input_keyboard()` |
-| `nav:planned_list` | показать список запланированных (существующая логика `/planned`) |
-| `nav:recurring_list` | показать список регулярных (существующая логика `/recurring`) |
-| `planned:confirm` | сохранить `user_data["pending_planned"]` через `PlannedExpenseService.create_manual()` |
-| `planned:cancel` | очистить `mode` и `pending_planned`, вернуть главное меню |
-| `recurring:confirm` | сохранить `user_data["pending_recurring"]` через `RecurringService.create()` |
-| `recurring:cancel` | очистить `mode` и `pending_recurring`, вернуть главное меню |
+| `nav:planned_list` | показать список запланированных (логика `/planned`); **заменяет** старый `nav:planned` |
+| `nav:recurring_list` | показать список регулярных (логика `/recurring`); **заменяет** старый `nav:recurring` |
+| `planned_input:confirm` | сохранить `user_data["pending_planned"]` через `PlannedExpenseService.create_manual()` (sync-вызов, без `await`) |
+| `planned_input:cancel` | очистить `mode` и `pending_planned`, вернуть главное меню |
+| `recurring_input:confirm` | сохранить `user_data["pending_recurring"]` через `RecurringService.create()` (sync-вызов, без `await`) |
+| `recurring_input:cancel` | очистить `mode` и `pending_recurring`, вернуть главное меню |
 
 #### `text_message_handler` — добавить обработку mode
 
@@ -200,9 +205,12 @@ context.user_data.pop("pending_recurring", None)
 3. При ошибке LLM → «Не смог разобрать. Попробуй ещё раз».
 4. Валидация: `planned_date_iso` не null → «Не понял дату. Укажи, например: 15 апреля».
 5. Валидация: `planned_date_iso >= today` → «Дата уже прошла. Укажи будущую дату».
-6. Сохранить в `user_data["pending_planned"]`.
-7. Очистить `user_data["mode"]`.
-8. Отправить сообщение подтверждения с `planned_confirm_keyboard()`.
+6. Если `category_slug` не найден в списке категорий пользователя — использовать `"other"` как fallback.
+7. Сохранить в `user_data["pending_planned"]`.
+8. Очистить `user_data["mode"]`.
+9. Отправить сообщение подтверждения с `planned_confirm_keyboard()`.
+
+**После показа подтверждения:** `mode` уже очищен. Если пользователь отправит новый текст вместо нажатия кнопки — он будет обработан как обычная транзакция. `pending_planned` сохраняется до явного `confirm` или `cancel`.
 
 #### `_handle_recurring_input(update, context, text)`
 
@@ -210,9 +218,12 @@ context.user_data.pop("pending_recurring", None)
 2. Вызвать `llm_service.extract_recurring(text, user_categories)`.
 3. При ошибке LLM → «Не смог разобрать. Попробуй ещё раз».
 4. Валидация: все обязательные поля присутствуют.
-5. Сохранить в `user_data["pending_recurring"]`.
-6. Очистить `user_data["mode"]`.
-7. Отправить сообщение подтверждения с `recurring_confirm_keyboard()`.
+5. Если `category_slug` не найден в списке категорий пользователя — использовать `"other"` как fallback.
+6. Сохранить в `user_data["pending_recurring"]`.
+7. Очистить `user_data["mode"]`.
+8. Отправить сообщение подтверждения с `recurring_confirm_keyboard()`.
+
+**После показа подтверждения:** `mode` уже очищен. Если пользователь отправит новый текст — он будет обработан как обычная транзакция. `pending_recurring` сохраняется до явного `confirm` или `cancel`.
 
 ---
 
