@@ -18,7 +18,7 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "users",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("telegram_user_id", sa.BigInteger(), nullable=False),
         sa.Column("display_name", sa.String(length=255), nullable=True),
         sa.Column("timezone", sa.String(length=50), nullable=False, server_default="Europe/Moscow"),
@@ -41,7 +41,7 @@ def upgrade() -> None:
 
     op.create_table(
         "user_category_mappings",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("telegram_user_id", sa.BigInteger(), nullable=False),
         sa.Column("merchant_text", sa.String(length=100), nullable=False),
         sa.Column("category", sa.String(length=50), nullable=False),
