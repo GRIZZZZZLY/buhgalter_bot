@@ -47,6 +47,23 @@ def _back_btn(target: str = "nav:menu") -> InlineKeyboardButton:
     return _btn("← Назад", target)
 
 
+def done_keyboard(back_target: str | None = None) -> InlineKeyboardMarkup:
+    """Post-action keyboard: [← Назад] [≡ Меню] or just [≡ Меню]."""
+    if back_target:
+        return InlineKeyboardMarkup([[_back_btn(back_target), _menu_btn()]])
+    return InlineKeyboardMarkup([[_menu_btn()]])
+
+
+def advisor_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for QA/advisor responses: [📊 Сводка] [≡ Меню]."""
+    return InlineKeyboardMarkup([[_btn("📊 Сводка", "nav:stats"), _menu_btn()]])
+
+
+def cancel_keyboard(back_target: str) -> InlineKeyboardMarkup:
+    """Keyboard for input prompts: [❌ Отмена]."""
+    return InlineKeyboardMarkup([[_btn("❌ Отмена", back_target)]])
+
+
 # ---------------------------------------------------------------------------
 # Main menu — inline keyboard
 # ---------------------------------------------------------------------------
@@ -178,7 +195,55 @@ def category_delete_confirm_keyboard(slug: str) -> InlineKeyboardMarkup:
 
 
 def budgets_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[_menu_btn()]])
+    return InlineKeyboardMarkup([
+        [_btn("✏️ Общий бюджет", "budget:set_total"),
+         _btn("🗂 По категории", "budget:pick_category")],
+        [_menu_btn()],
+    ])
+
+
+def budget_category_keyboard(categories: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """Inline grid of expense categories to set budget for.
+
+    categories: list of (slug, label) tuples.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for slug, label in categories:
+        row.append(_btn(label, f"budget:set_category:{slug}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([_back_btn("nav:budgets")])
+    return InlineKeyboardMarkup(rows)
+
+
+def budget_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation after free-form total budget input."""
+    return InlineKeyboardMarkup([
+        [_btn("✅ Сохранить", "budget:total_confirm"),
+         _btn("❌ Отмена", "budget:total_cancel")],
+    ])
+
+
+def budget_cat_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation after free-form category budget input."""
+    return InlineKeyboardMarkup([
+        [_btn("✅ Сохранить", "budget:cat_confirm"),
+         _btn("❌ Отмена", "budget:cat_cancel")],
+    ])
+
+
+def budget_total_input_keyboard() -> InlineKeyboardMarkup:
+    """Cancel button shown while awaiting total budget text/voice input."""
+    return InlineKeyboardMarkup([[_btn("❌ Отмена", "budget:total_cancel")]])
+
+
+def budget_cat_input_keyboard() -> InlineKeyboardMarkup:
+    """Cancel button shown while awaiting category budget text/voice input."""
+    return InlineKeyboardMarkup([[_btn("❌ Отмена", "budget:cat_cancel")]])
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +320,6 @@ def categories_list_inline_keyboard(tx_type: str, top_cats: list[str]) -> Inline
 def settings_nav_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [_btn("📅 Начало периода", "settings:budget_day")],
-        [_btn("💰 Бюджет на месяц", "settings:budget")],
         [_btn("🔔 Напоминания", "settings:reminders")],
         [_btn("🌍 Часовой пояс", "settings:timezone")],
         [_btn("⏰ Утреннее", "settings:morning"), _btn("🌙 Вечернее", "settings:evening")],
@@ -267,7 +331,6 @@ def settings_nav_inline_keyboard() -> InlineKeyboardMarkup:
 def settings_keyboard() -> InlineKeyboardMarkup:
     """Used by /settings command."""
     return InlineKeyboardMarkup([
-        [_btn("💰 Бюджет", "settings:budget")],
         [_btn("⏰ Утреннее напоминание", "settings:morning")],
         [_btn("🌙 Вечернее напоминание", "settings:evening")],
         [_btn("🌍 Часовой пояс", "settings:timezone")],
