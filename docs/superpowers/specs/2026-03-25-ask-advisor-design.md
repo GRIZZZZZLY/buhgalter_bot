@@ -25,7 +25,7 @@ Add three new sections to the LLM system prompt context:
   food: 15000₽/мес, потрачено 8200₽ (55%)
   transport: 5000₽/мес, потрачено 4800₽ (96%) ⚠️
 ```
-Source: `BudgetRepository.get_all_for_user()` + `TransactionRepository.sum_expenses_by_category()`.
+Source: `CategoryBudgetRepository.get_all_for_user()` + `TransactionRepository.sum_expenses_by_category()`.
 
 **Planned expenses:**
 ```
@@ -33,7 +33,7 @@ Source: `BudgetRepository.get_all_for_user()` + `TransactionRepository.sum_expen
   Стоматолог: 12000₽, 2026-04-01
   Страховка авто: 35000₽, 2026-04-15
 ```
-Source: `PlannedExpenseRepository.list_upcoming()`.
+Source: `PlannedExpenseRepository.list_future_for_user()`.
 
 **Recurring payments:**
 ```
@@ -41,10 +41,14 @@ Source: `PlannedExpenseRepository.list_upcoming()`.
   Аренда: 45000₽/мес (расход)
   Зарплата: 150000₽/мес (доход)
 ```
-Source: `RecurringTransactionRepository.list_for_user()`.
+Source: `RecurringTransactionRepository.list_active()`.
+
+### Empty data handling
+If a user has no budgets, planned expenses, or recurring payments — that section is omitted from the prompt entirely (not "none configured").
 
 ### Files changed
-- `backend/app/services/financial_qa_service.py` — `_build_context()` method
+- `backend/app/services/financial_qa_service.py` — `_build_context()` method; constructor gains `db` session access to new repositories (created inline, same pattern as existing `TransactionRepository`)
+- `backend/app/telegram/runtime.py` — no constructor change needed (already passes `db` session)
 
 ## B: Multi-Period Analysis
 
@@ -98,14 +102,16 @@ Last 20 transactions remain current-month only (for detail).
 
 ### Keyboard after each answer
 ```
-[🔄 Ещё вопрос] [✕ Завершить]
+[✕ Завершить]
 ```
+User simply types the next question — no `[Ещё вопрос]` button needed since all text in advisor mode routes to QA.
 
 ### Files changed
 - `backend/app/services/financial_qa_service.py` — `answer()` accepts `history` parameter, passes to LLM
-- `backend/app/telegram/handlers.py` — advisor mode routing in `process_message()`
+- `backend/app/telegram/handlers.py` — advisor mode routing in `handle_text()` (early return before parser) and voice routing in `handle_voice()` (STT → QA instead of transaction flow)
 - `backend/app/telegram/runtime.py` — advisor mode handling for text and voice messages
-- `backend/app/telegram/keyboards.py` — new `advisor_session_keyboard()`
+- `backend/app/telegram/keyboards.py` — new `advisor_session_keyboard()` with `[✕ Завершить]`
+- `backend/app/services/nav_service.py` — clear `mode`/`advisor_history` on any nav callback (advisor mode cleanup)
 
 ## D1: Main Menu Button + Onboarding
 
@@ -164,4 +170,4 @@ Each step is a separate commit with tests.
 
 - **Prompt size**: Adding 3 months of data + budgets + planned + recurring may approach token limits for users with many categories. Mitigation: cap category lines at 10 per month (top by amount).
 - **Mode conflicts**: Advisor mode must be cleared when user navigates elsewhere. Mitigation: clear `mode` in all nav callbacks (already done for other modes).
-- **LLM latency**: More context = slower responses. Mitigation: Groq is fast; 3 months of aggregated data is ~500 tokens max.
+- **LLM latency**: More context = slower responses. Mitigation: Groq is fast. Estimated full prompt: system ~100 tokens + 3-month stats ~300 tokens + budgets/planned/recurring ~200 tokens + 5-turn history ~500 tokens + last 20 txns ~300 tokens = ~1400 tokens total, well within Groq limits.
