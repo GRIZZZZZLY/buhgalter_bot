@@ -161,10 +161,12 @@ def categories_nav_keyboard(categories_by_type: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def category_edit_keyboard(slug: str, is_custom: bool) -> InlineKeyboardMarkup:
+def category_edit_keyboard(slug: str, is_custom: bool, is_hidden: bool) -> InlineKeyboardMarkup:
+    hide_label = "👁 Показать" if is_hidden else "🙈 Скрыть"
     rows = [
         [_btn("✏️ Изменить название", f"categories:rename:{slug}")],
         [_btn("🎨 Изменить emoji", f"categories:emoji:{slug}")],
+        [_btn(hide_label, f"categories:toggle_hidden:{slug}")],
     ]
     if is_custom:
         rows.append([_btn("🗑 Удалить", f"categories:delete:{slug}")])
@@ -396,9 +398,13 @@ def low_confidence_keyboard(amount: str) -> InlineKeyboardMarkup:
     ])
 
 
-def low_confidence_category_keyboard(tx_type: str, amount: str) -> InlineKeyboardMarkup:
+def low_confidence_category_keyboard(
+    tx_type: str, amount: str, categories: list[str] | None = None
+) -> InlineKeyboardMarkup:
     """After type is chosen — pick category."""
-    if tx_type == "income":
+    if categories is not None:
+        slugs = categories
+    elif tx_type == "income":
         slugs = ["salary", "freelance", "bonus", "transfer", "refund", "other_income"]
     else:
         slugs = ["food", "transport", "housing", "health", "entertainment",
@@ -536,14 +542,19 @@ def edit_item_keyboard(transaction_id: str) -> InlineKeyboardMarkup:
     ])
 
 
-def edit_categories_keyboard(transaction_id: str) -> InlineKeyboardMarkup:
-    slugs = [
-        ("food", "🍽"), ("transport", "🚌"), ("housing", "🏠"), ("health", "💊"),
-        ("beauty", "✨"), ("entertainment", "🎬"), ("subscriptions", "📱"), ("shopping", "🛍"),
-        ("home", "🪴"), ("telecom", "📡"), ("work", "💼"), ("education", "📚"),
-        ("gifts", "🎁"), ("fees", "💳"), ("salary", "💰"), ("freelance", "🖥"),
-        ("bonus", "🏆"), ("other", "•"),
-    ]
+def edit_categories_keyboard(
+    transaction_id: str, categories: list[tuple[str, str]] | None = None
+) -> InlineKeyboardMarkup:
+    if categories is not None:
+        slugs = categories
+    else:
+        slugs = [
+            ("food", "🍽"), ("transport", "🚌"), ("housing", "🏠"), ("health", "💊"),
+            ("beauty", "✨"), ("entertainment", "🎬"), ("subscriptions", "📱"), ("shopping", "🛍"),
+            ("home", "🪴"), ("telecom", "📡"), ("work", "💼"), ("education", "📚"),
+            ("gifts", "🎁"), ("fees", "💳"), ("salary", "💰"), ("freelance", "🖥"),
+            ("bonus", "🏆"), ("other", "•"),
+        ]
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for slug, emoji in slugs:
