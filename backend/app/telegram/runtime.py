@@ -184,7 +184,7 @@ async def catfix_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         with SessionLocal() as db:
             svc = TelegramBotService(db)
             result = svc.handle_category_correction(user_id, tx_id, slug)
-        await query.edit_message_text(result["message"], parse_mode="HTML")
+        await query.edit_message_text(result["message"], parse_mode="HTML", reply_markup=done_keyboard())
         return
 
     await query.edit_message_reply_markup(reply_markup=None)
@@ -330,7 +330,7 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
         name_ru = pending.get("name_ru", "")
         emoji = pending.get("emoji", "")
         if not name_ru or not emoji:
-            await query.edit_message_text("❌ Что-то пошло не так. Попробуй снова.")
+            await query.edit_message_text("❌ Что-то пошло не так. Попробуй снова.", reply_markup=done_keyboard(back_target="nav:categories"))
             return
         context.user_data.pop("pending_category_add", None)
         context.user_data.pop("awaiting_category_add", None)
@@ -341,9 +341,9 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             try:
                 cat = svc.add_custom(user_id, name_ru, emoji, cat_type)
             except ValueError as e:
-                await query.edit_message_text(f"❌ {e}")
+                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target="nav:categories"))
                 return
-        await query.edit_message_text(f"✅ Категория «{cat.emoji} {cat.name_ru}» создана!")
+        await query.edit_message_text(f"✅ Категория «{cat.emoji} {cat.name_ru}» создана!", reply_markup=done_keyboard())
         return
 
     if action == "delete":
@@ -354,7 +354,7 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             svc.ensure_seeded(user_id)
             cat = svc._repo.get_by_slug(user_id, slug)
             if cat is None or not cat.is_custom:
-                await query.edit_message_text("❌ Нельзя удалить системную категорию.")
+                await query.edit_message_text("❌ Нельзя удалить системную категорию.", reply_markup=done_keyboard(back_target="nav:categories"))
                 return
             count = svc.count_transactions(user_id, slug)
             if count > 0:
@@ -388,14 +388,14 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             try:
                 svc.delete_custom(user_id, slug, reassign_to_slug="other")
             except ValueError as e:
-                await query.edit_message_text(f"❌ {e}")
+                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target="nav:categories"))
                 return
-        await query.edit_message_text("✅ Категория удалена.")
+        await query.edit_message_text("✅ Категория удалена.", reply_markup=done_keyboard())
         return
 
     if action == "reassign":
         if "__" not in param:
-            await query.edit_message_text("❌ Неверный формат.")
+            await query.edit_message_text("❌ Неверный формат.", reply_markup=done_keyboard(back_target="nav:categories"))
             return
         from_slug, to_slug = param.split("__", 1)
         with SessionLocal() as db:
@@ -405,9 +405,9 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             try:
                 svc.delete_custom(user_id, from_slug, to_slug)
             except ValueError as e:
-                await query.edit_message_text(f"❌ {e}")
+                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target="nav:categories"))
                 return
-        await query.edit_message_text("✅ Транзакции перенесены, категория удалена.")
+        await query.edit_message_text("✅ Транзакции перенесены, категория удалена.", reply_markup=done_keyboard())
         return
 
 
@@ -600,7 +600,7 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         items = svc.list_recent_for_delete(update.effective_user.id, limit=5)
 
     if not items:
-        await update.effective_message.reply_text("📭 Записей для редактирования нет.")
+        await update.effective_message.reply_text("📭 Записей для редактирования нет.", reply_markup=done_keyboard())
         return
 
     await update.effective_message.reply_text(
@@ -630,7 +630,7 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             svc = TransactionService(db)
             items = svc.list_recent_for_delete(user_id, limit=5)
         if not items:
-            await query.edit_message_text("📭 Записей нет.")
+            await query.edit_message_text("📭 Записей нет.", reply_markup=done_keyboard())
             return
         await query.edit_message_text(
             "✏️ Выбери запись для редактирования:",
@@ -645,7 +645,7 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             items = svc.list_recent_for_delete(user_id, limit=20)
             tx = next((i for i in items if i["id"] == tx_id), None)
         if tx is None:
-            await query.edit_message_text("❌ Не нашёл запись.")
+            await query.edit_message_text("❌ Не нашёл запись.", reply_markup=done_keyboard(back_target="nav:menu"))
             return
         sign  = "↗" if tx["type"] == "income" else "↘"
         label = formatter.category_label(tx["category"])
@@ -660,9 +660,9 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             svc = TransactionService(db)
             deleted = svc.delete_transaction(user_id, UUID(tx_id))
         if deleted:
-            await query.edit_message_text("✅ Удалил запись.")
+            await query.edit_message_text("✅ Удалил запись.", reply_markup=done_keyboard())
         else:
-            await query.edit_message_text("❌ Не нашёл запись. Возможно, она уже удалена.")
+            await query.edit_message_text("❌ Не нашёл запись. Возможно, она уже удалена.", reply_markup=done_keyboard(back_target="nav:menu"))
         return
 
     if action == "type":
@@ -674,7 +674,7 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             items = svc.list_recent_for_delete(user_id, limit=20)
             tx = next((i for i in items if i["id"] == tx_id), None)
             if tx is None:
-                await query.edit_message_text("❌ Не нашёл запись.")
+                await query.edit_message_text("❌ Не нашёл запись.", reply_markup=done_keyboard(back_target="nav:menu"))
                 return
             new_type = "income" if tx["type"] == "expense" else "expense"
             svc.update_transaction(user_id, UUID(tx_id), TransactionUpdateRequest(type=new_type))
@@ -692,7 +692,7 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 "chat_id": query.message.chat_id,
                 "message_id": query.message.message_id,
             }
-        await query.edit_message_text("✏️ Введи новую сумму (например: 750 или 1200.50):")
+        await query.edit_message_text("✏️ Введи новую сумму (например: 750 или 1200.50):", reply_markup=cancel_keyboard("edit:select"))
         return
 
     if action == "cat":
@@ -913,7 +913,7 @@ async def undo_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     transaction_ids = [tid.strip() for tid in ids_str.split(",") if tid.strip()]
 
     if not transaction_ids:
-        await query.edit_message_text("❌ Не удалось отменить: ID не найден.")
+        await query.edit_message_text("❌ Не удалось отменить: ID не найден.", reply_markup=done_keyboard())
         return
 
     deleted_count = 0
@@ -930,9 +930,9 @@ async def undo_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     if deleted_count > 0:
         suffix = f" ({deleted_count} записи)" if deleted_count > 1 else ""
-        await query.edit_message_text(f"↩ Отменено{suffix}.")
+        await query.edit_message_text(f"↩ Отменено{suffix}.", reply_markup=done_keyboard())
     else:
-        await query.edit_message_text("Запись уже была удалена или не найдена.")
+        await query.edit_message_text("Запись уже была удалена или не найдена.", reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -962,12 +962,12 @@ async def catres_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         pending = _store_get(user_id)
         if pending is None:
-            await query.edit_message_text("Сессия истекла. Отправь запись заново.")
+            await query.edit_message_text("Сессия истекла. Отправь запись заново.", reply_markup=done_keyboard())
             return
 
         if action == "cancel":
             _store_pop(user_id)
-            await query.edit_message_text("Запись отменена.")
+            await query.edit_message_text("Запись отменена.", reply_markup=done_keyboard())
             return
 
         if action == "use":
@@ -975,7 +975,7 @@ async def catres_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             category = payload
             result = flow._save_from_pending(user_id, pending, category, remove_keyboard=False)
             db.commit()
-            await query.edit_message_text(result["message"], parse_mode="HTML")
+            await query.edit_message_text(result["message"], parse_mode="HTML", reply_markup=done_keyboard())
             if result.get("saved_transaction_id"):
                 await _send_saved_with_undo(
                     update, context, result["message"], [result["saved_transaction_id"]]
@@ -986,14 +986,14 @@ async def catres_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             # payload = raw_category name
             result = flow._save_from_pending(user_id, payload, pending, payload, remove_keyboard=False)
             db.commit()
-            await query.edit_message_text(result["message"], parse_mode="HTML")
+            await query.edit_message_text(result["message"], parse_mode="HTML", reply_markup=done_keyboard())
             if result.get("saved_transaction_id"):
                 await _send_saved_with_undo(
                     update, context, result["message"], [result["saved_transaction_id"]]
                 )
             return
 
-    await query.edit_message_text("Не удалось обработать выбор.")
+    await query.edit_message_text("Не удалось обработать выбор.", reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -1017,7 +1017,7 @@ async def lowconf_callback_handler(update: Update, context: ContextTypes.DEFAULT
     action = parts[1] if len(parts) > 1 else ""
 
     if action == "cancel":
-        await query.edit_message_text("Запись отменена.")
+        await query.edit_message_text("Запись отменена.", reply_markup=done_keyboard())
         return
 
     if action in ("expense", "income"):
@@ -1060,11 +1060,11 @@ async def lowconf_callback_handler(update: Update, context: ContextTypes.DEFAULT
         operation_label = "доход" if tx_type == "income" else "расход"
         balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
         msg = formatter.format_saved(operation_label, str(item.amount), item.category, balance)
-        await query.edit_message_text(msg, parse_mode="HTML")
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=done_keyboard())
         await _send_saved_with_undo(update, context, msg, [str(item.id)])
         return
 
-    await query.edit_message_text("Не удалось обработать выбор.")
+    await query.edit_message_text("Не удалось обработать выбор.", reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
