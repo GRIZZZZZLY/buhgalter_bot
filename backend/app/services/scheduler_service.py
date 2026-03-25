@@ -141,7 +141,12 @@ class SchedulerService:
                         reminder_service = ReminderService(db)
                         message, top_categories = reminder_service.build_evening_checkin(user)
                         if message:
-                            keyboard = evening_checkin_keyboard(top_categories)
+                            from app.services.category_service import CategoryService
+                            cat_svc = CategoryService(db)
+                            cat_svc.ensure_seeded(user.telegram_user_id)
+                            visible_slugs = {c.slug for c in cat_svc.get_visible_for_type(user.telegram_user_id, "expense")}
+                            filtered_top = [c for c in top_categories if c in visible_slugs]
+                            keyboard = evening_checkin_keyboard(filtered_top or top_categories)
                             await self._send_message(
                                 user.telegram_user_id, message, reply_markup=keyboard
                             )

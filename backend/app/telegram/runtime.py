@@ -190,8 +190,19 @@ async def catfix_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         return
 
     if action == "change":
+        user_id = update.effective_user.id
+        with SessionLocal() as _cat_db:
+            from app.services.category_service import CategoryService
+            _ensure_user(_cat_db, update)
+            _cat_svc = CategoryService(_cat_db)
+            _cat_svc.ensure_seeded(user_id)
+            _all_visible = (
+                [c.slug for c in _cat_svc.get_visible_for_type(user_id, "expense")]
+                + [c.slug for c in _cat_svc.get_visible_for_type(user_id, "income")]
+            )
+            _visible_catfix = [s for s in _CATFIX_CATEGORIES if s in _all_visible]
         await query.edit_message_reply_markup(
-            reply_markup=category_grid_keyboard(tx_id, _CATFIX_CATEGORIES)
+            reply_markup=category_grid_keyboard(tx_id, _visible_catfix or _CATFIX_CATEGORIES)
         )
         return
 
@@ -752,9 +763,24 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=edit_item_keyboard(tx_id),
             )
         else:
+            with SessionLocal() as _cat_db:
+                from app.services.category_service import CategoryService
+                _ensure_user(_cat_db, update)
+                _cat_svc = CategoryService(_cat_db)
+                _cat_svc.ensure_seeded(user_id)
+                _all_visible = (
+                    _cat_svc.get_visible_for_type(user_id, "expense")
+                    + _cat_svc.get_visible_for_type(user_id, "income")
+                )
+                seen: set[str] = set()
+                _visible_edit: list[tuple[str, str]] = []
+                for c in _all_visible:
+                    if c.slug not in seen:
+                        seen.add(c.slug)
+                        _visible_edit.append((c.slug, c.emoji))
             await query.edit_message_text(
                 "Выбери категорию:",
-                reply_markup=edit_categories_keyboard(tx_id),
+                reply_markup=edit_categories_keyboard(tx_id, categories=_visible_edit),
             )
         return
 
@@ -1066,9 +1092,16 @@ async def lowconf_callback_handler(update: Update, context: ContextTypes.DEFAULT
     if action in ("expense", "income"):
         # User chose type — now show category keyboard
         amount = parts[2] if len(parts) > 2 else "0"
+        user_id = update.effective_user.id
+        with SessionLocal() as _cat_db:
+            from app.services.category_service import CategoryService
+            _ensure_user(_cat_db, update)
+            _cat_svc = CategoryService(_cat_db)
+            _cat_svc.ensure_seeded(user_id)
+            _visible = [c.slug for c in _cat_svc.get_visible_for_type(user_id, action)]
         await query.edit_message_text(
             f"{'↘ Расход' if action == 'expense' else '↗ Доход'} {amount} ₽ — выбери категорию:",
-            reply_markup=low_confidence_category_keyboard(action, amount),
+            reply_markup=low_confidence_category_keyboard(action, amount, categories=_visible),
         )
         return
 
