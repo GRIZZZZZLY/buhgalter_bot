@@ -22,6 +22,7 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.user_category_mapping_repository import UserCategoryMappingRepository
 from app.schemas.telegram import TelegramVoicePayload
 from app.services.analytics_service import AnalyticsService
+from app.services.financial_qa_service import FinancialQAService
 from app.services.nav_service import NavService
 from app.services.planned_expense_service import parse_plan_args
 from app.services.recurring_service import RecurringService, parse_recurring_args, parse_recurring_schedule_args
@@ -30,10 +31,13 @@ from app.telegram.bot_service import TelegramBotService
 from app.telegram.formatter import TreasuryFormatter
 from app.telegram.handlers import START_MESSAGE
 from app.telegram.keyboards import (
+    advisor_keyboard,
+    cancel_keyboard,
     category_grid_keyboard,
     category_resolution_keyboard,
     delete_all_confirm_keyboard,
     delete_keyboard,
+    done_keyboard,
     edit_categories_keyboard,
     edit_item_keyboard,
     edit_select_keyboard,
@@ -434,6 +438,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CommandHandler("plan", plan_command))
     application.add_handler(CommandHandler("planned", planned_command))
+    application.add_handler(CommandHandler("ask", ask_command))
     application.add_handler(CommandHandler("improve_categories", improve_categories_command))
     application.add_handler(CallbackQueryHandler(recurring_callback_handler, pattern=r"^recurring:"))
     application.add_handler(CallbackQueryHandler(edit_callback_handler,    pattern=r"^edit:"))
@@ -451,6 +456,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(catfix_callback_handler,  pattern=r"^catfix:"))
     application.add_handler(CallbackQueryHandler(categories_callback_handler, pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
+    application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     return application
@@ -506,6 +512,20 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         service = TelegramBotService(db)
         response = service.process_summary_command(update.effective_user.id, period=period)
     await update.effective_message.reply_text(response["message"])
+
+
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    question = " ".join(context.args).strip() if context.args else ""
+    if not question:
+        await update.effective_message.reply_text(
+            "Задай вопрос после команды, например:\n/ask сколько я потратил на еду?"
+        )
+        return
+    await update.effective_message.reply_text("🤔 Анализирую…")
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        answer = FinancialQAService(db).answer(question, update.effective_user.id)
+    await update.effective_message.reply_text(answer)
 
 
 # ---------------------------------------------------------------------------
@@ -1804,13 +1824,19 @@ async def _handle_recurring_input(
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.effective_message.text or ""
 
-    # Handle input modes (planned/recurring free-form input)
+    # Handle input modes (planned/recurring/budget free-form input)
     mode = context.user_data.get("mode") if context.user_data else None
     if mode == "planned_input":
         await _handle_planned_input(update, context, text.strip())
         return
     if mode == "recurring_input":
         await _handle_recurring_input(update, context, text.strip())
+        return
+    if mode == "budget_total_input":
+        await _handle_budget_total_input(update, context, text.strip())
+        return
+    if mode == "budget_category_input":
+        await _handle_budget_category_input(update, context, text.strip())
         return
 
     # Handle settings input
@@ -2161,7 +2187,7 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Handle input modes via STT
     mode = context.user_data.get("mode") if context.user_data else None
-    if mode in ("planned_input", "recurring_input"):
+    if mode in ("planned_input", "recurring_input", "budget_total_input", "budget_category_input"):
         try:
             from app.services.audio_file_service import AudioFileService
             from app.services.stt_service import STTService
@@ -2173,8 +2199,12 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
             if transcribed:
                 if mode == "planned_input":
                     await _handle_planned_input(update, context, transcribed)
-                else:
+                elif mode == "recurring_input":
                     await _handle_recurring_input(update, context, transcribed)
+                elif mode == "budget_total_input":
+                    await _handle_budget_total_input(update, context, transcribed)
+                else:
+                    await _handle_budget_category_input(update, context, transcribed)
             else:
                 await update.effective_message.reply_text(
                     "❌ Не удалось распознать речь. Попробуй ещё раз."
@@ -2404,6 +2434,206 @@ def _validate_time(value: str) -> bool:
         return 0 <= h <= 23 and 0 <= m <= 59
     except (ValueError, IndexError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Budget free-form input handlers
+# ---------------------------------------------------------------------------
+
+async def _handle_budget_total_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    """Parse total monthly budget from free-form text or STT transcript."""
+    from app.services.parser_service import ParserService
+    from app.telegram.keyboards import budget_confirm_keyboard
+
+    amount = ParserService._extract_amount(text)
+    if context.user_data:
+        context.user_data.pop("mode", None)
+
+    if amount is None or amount <= 0:
+        await update.effective_message.reply_text(
+            "❌ Не смог распознать сумму. Попробуй ещё раз."
+        )
+        return
+
+    if context.user_data is not None:
+        context.user_data["pending_budget_total"] = float(amount)
+
+    msg = f"Установить общий бюджет на месяц: {float(amount):,.0f} ₽?"
+    await update.effective_message.reply_text(msg, reply_markup=budget_confirm_keyboard())
+
+
+async def _handle_budget_category_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    """Parse category budget limit from free-form text or STT transcript."""
+    from app.services.parser_service import ParserService
+    from app.telegram.keyboards import budget_cat_confirm_keyboard
+
+    amount = ParserService._extract_amount(text)
+    slug = (context.user_data or {}).get("pending_budget_slug", "")
+    if context.user_data:
+        context.user_data.pop("mode", None)
+
+    if amount is None or amount < 0:
+        await update.effective_message.reply_text(
+            "❌ Не смог распознать сумму. Попробуй ещё раз."
+        )
+        return
+
+    if context.user_data is not None:
+        context.user_data["pending_budget_cat_amount"] = float(amount)
+
+    cat_label = formatter.category_label(slug)
+    if float(amount) == 0:
+        msg = f"Удалить бюджет для «{cat_label}»?"
+    else:
+        msg = f"Установить бюджет «{cat_label}»: {float(amount):,.0f} ₽/мес?"
+    await update.effective_message.reply_text(msg, reply_markup=budget_cat_confirm_keyboard())
+
+
+# ---------------------------------------------------------------------------
+# Budget callback handler
+# ---------------------------------------------------------------------------
+
+async def budget_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from telegram.error import BadRequest
+    from app.telegram.keyboards import (
+        budget_category_keyboard,
+        budget_total_input_keyboard,
+        budget_cat_input_keyboard,
+        budgets_inline_keyboard,
+    )
+    from app.services.category_service import CategoryService
+    from app.repositories.category_budget_repository import CategoryBudgetRepository
+
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data = query.data  # e.g. "budget:set_total"
+    action = data[len("budget:"):]
+
+    if action == "set_total":
+        if context.user_data is not None:
+            context.user_data["mode"] = "budget_total_input"
+        try:
+            await query.edit_message_text(
+                "💰 Введи общий бюджет на месяц.\n"
+                "Можно текстом или голосом: «пятьдесят тысяч», «50000».",
+                reply_markup=budget_total_input_keyboard(),
+            )
+        except BadRequest:
+            pass
+        return
+
+    if action == "pick_category":
+        with SessionLocal() as db:
+            cat_svc = CategoryService(db)
+            cat_svc.ensure_seeded(user_id)
+            groups = cat_svc.list_categories(user_id)
+        cats = [(c.slug, f"{c.emoji} {c.name_ru}") for c in groups.get("expense", [])]
+        try:
+            await query.edit_message_text(
+                "🗂 Выбери категорию для установки лимита:",
+                reply_markup=budget_category_keyboard(cats),
+            )
+        except BadRequest:
+            pass
+        return
+
+    if action.startswith("set_category:"):
+        slug = action[len("set_category:"):]
+        if context.user_data is not None:
+            context.user_data["mode"] = "budget_category_input"
+            context.user_data["pending_budget_slug"] = slug
+        cat_label = formatter.category_label(slug)
+        try:
+            await query.edit_message_text(
+                f"💰 Введи лимит для «{cat_label}».\n"
+                "Можно текстом или голосом. Отправь «0» чтобы удалить лимит.",
+                reply_markup=budget_cat_input_keyboard(),
+            )
+        except BadRequest:
+            pass
+        return
+
+    if action == "total_confirm":
+        amount = (context.user_data or {}).get("pending_budget_total")
+        if context.user_data:
+            context.user_data.pop("pending_budget_total", None)
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            user_repo = UserRepository(db)
+            user = user_repo.get_by_telegram_id(user_id)
+            user_repo.update_settings(user, budget_amount=amount if amount else None)
+            user_repo.commit()
+            nav = NavService(db)
+            screen = nav.budgets_screen(user_id)
+        msg = f"✅ Бюджет установлен: {amount:,.0f} ₽/мес\n\n" + screen.text if amount else "✅ Бюджет убран.\n\n" + screen.text
+        try:
+            await query.edit_message_text(msg, reply_markup=budgets_inline_keyboard(), parse_mode=screen.parse_mode)
+        except BadRequest:
+            await update.effective_chat.send_message(msg, reply_markup=budgets_inline_keyboard(), parse_mode=screen.parse_mode)
+        return
+
+    if action == "total_cancel":
+        if context.user_data:
+            context.user_data.pop("mode", None)
+            context.user_data.pop("pending_budget_total", None)
+        with SessionLocal() as db:
+            nav = NavService(db)
+            screen = nav.budgets_screen(user_id)
+        try:
+            await query.edit_message_text(screen.text, reply_markup=budgets_inline_keyboard(), parse_mode=screen.parse_mode)
+        except BadRequest:
+            pass
+        return
+
+    if action == "cat_confirm":
+        slug = (context.user_data or {}).get("pending_budget_slug", "")
+        amount = (context.user_data or {}).get("pending_budget_cat_amount", 0.0)
+        if context.user_data:
+            context.user_data.pop("pending_budget_slug", None)
+            context.user_data.pop("pending_budget_cat_amount", None)
+        cat_label = formatter.category_label(slug)
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            budget_repo = CategoryBudgetRepository(db)
+            if amount <= 0:
+                budget_repo.remove(user_id, slug)
+                db.commit()
+                status = f"✅ Бюджет «{cat_label}» удалён."
+            else:
+                budget_repo.upsert(user_id, slug, amount)
+                db.commit()
+                status = f"✅ Бюджет «{cat_label}»: {amount:,.0f} ₽/мес"
+            nav = NavService(db)
+            screen = nav.budgets_screen(user_id)
+        msg = status + "\n\n" + screen.text
+        try:
+            await query.edit_message_text(msg, reply_markup=budgets_inline_keyboard(), parse_mode=screen.parse_mode)
+        except BadRequest:
+            await update.effective_chat.send_message(msg, reply_markup=budgets_inline_keyboard(), parse_mode=screen.parse_mode)
+        return
+
+    if action == "cat_cancel":
+        if context.user_data:
+            context.user_data.pop("mode", None)
+            context.user_data.pop("pending_budget_slug", None)
+            context.user_data.pop("pending_budget_cat_amount", None)
+        with SessionLocal() as db:
+            nav = NavService(db)
+            screen = nav.budgets_screen(user_id)
+        try:
+            await query.edit_message_text(screen.text, reply_markup=budgets_inline_keyboard(), parse_mode=screen.parse_mode)
+        except BadRequest:
+            pass
+        return
 
 
 def run_polling() -> None:
