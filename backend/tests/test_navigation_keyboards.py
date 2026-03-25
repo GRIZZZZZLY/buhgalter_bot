@@ -24,11 +24,12 @@ def test_done_keyboard_with_back():
 def test_advisor_keyboard():
     kb = advisor_keyboard()
     buttons = kb.inline_keyboard
-    assert len(buttons) == 1
-    assert len(buttons[0]) == 2
-    assert buttons[0][0].text == "📊 Сводка"
-    assert buttons[0][0].callback_data == "nav:stats"
-    assert buttons[0][1].text == "≡ Меню"
+    assert len(buttons) == 2
+    assert len(buttons[0]) == 1
+    assert buttons[0][0].text == "🧠 Продолжить в советнике"
+    assert buttons[0][0].callback_data == "nav:advisor"
+    assert buttons[1][0].text == "📊 Сводка"
+    assert buttons[1][1].text == "≡ Меню"
 
 
 def test_cancel_keyboard():
