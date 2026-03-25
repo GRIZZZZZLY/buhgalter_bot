@@ -281,7 +281,7 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             svc.ensure_seeded(user_id)
             cat = svc._repo.get_by_slug(user_id, slug)
         if cat is None:
-            await query.edit_message_text("❌ Категория не найдена.")
+            await query.edit_message_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target="nav:categories"))
             return
         text = f"✏️ *{cat.emoji} {cat.name_ru}*\n\nЧто изменить?"
         await query.edit_message_text(
@@ -511,14 +511,15 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _ensure_user(db, update)
         service = TelegramBotService(db)
         response = service.process_summary_command(update.effective_user.id, period=period)
-    await update.effective_message.reply_text(response["message"])
+    await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     question = " ".join(context.args).strip() if context.args else ""
     if not question:
         await update.effective_message.reply_text(
-            "Задай вопрос после команды, например:\n/ask сколько я потратил на еду?"
+            "Задай вопрос после команды, например:\n/ask сколько я потратил на еду?",
+            reply_markup=done_keyboard(),
         )
         return
     await update.effective_message.reply_text("🤔 Анализирую…")
@@ -544,7 +545,7 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             reply_markup=delete_keyboard(response["items"]),
         )
         return
-    await update.effective_message.reply_text(response["message"])
+    await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
 
 
 async def deleteall_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -570,7 +571,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         user = user_repo.get_by_telegram_id(update.effective_user.id)
 
     if user is None:
-        await update.effective_message.reply_text("❌ Не нашёл пользователя.")
+        await update.effective_message.reply_text("❌ Не нашёл пользователя.", reply_markup=done_keyboard())
         return
 
     lines = [
@@ -784,7 +785,7 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         parsed = parse_plan_args(list(context.args))
         if isinstance(parsed, str):
-            await update.effective_message.reply_text(parsed)
+            await update.effective_message.reply_text(parsed, reply_markup=done_keyboard())
             return
 
         from app.services.parser_service import ParserService
@@ -810,7 +811,7 @@ async def planned_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         response = service.process_planned_command(update.effective_user.id)
         items = service.planned_expense_service.list_all(update.effective_user.id)
     if not items:
-        await update.effective_message.reply_text(response["message"])
+        await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
         return
     await update.effective_message.reply_text(response["message"])
     for item in items[:5]:
@@ -1430,6 +1431,7 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "  /budget транспорт 5000\n"
                 "  /budget еда 0  (удалить бюджет)\n"
                 "  /budget  (показать все бюджеты)",
+                reply_markup=done_keyboard(back_target="nav:budgets"),
             )
             return
 
@@ -2173,7 +2175,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     )
                     if insight_text:
                         await update.effective_message.reply_text(
-                            insight_text, parse_mode="HTML"
+                            insight_text, parse_mode="HTML", reply_markup=done_keyboard()
                         )
         except Exception:
             logger.exception("realtime insight failed")
