@@ -64,4 +64,16 @@ def test_get_visible_for_type_income_excludes_expenses(db):
     svc.ensure_seeded(USER_ID)
     visible = svc.get_visible_for_type(USER_ID, "income")
     types = {c.type for c in visible}
+    slugs = [c.slug for c in visible]
     assert "expense" not in types
+    assert len(visible) > 0
+    assert "salary" in slugs  # sanity check that income categories are present
+
+
+def test_toggle_hidden_seeds_automatically(db):
+    """toggle_hidden must seed built-ins automatically if not yet seeded."""
+    svc = CategoryService(db)
+    # Do NOT call ensure_seeded first
+    cat = svc.toggle_hidden(USER_ID, "food")
+    assert cat is not None
+    assert cat.is_hidden is True
