@@ -1,4 +1,4 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, WebAppInfo
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from app.telegram.formatter import TreasuryFormatter
 
@@ -296,23 +296,6 @@ def operations_delete_keyboard(items: list[dict], period: str = "month") -> Inli
 # Categories section
 # ---------------------------------------------------------------------------
 
-def categories_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [_btn("↗ Доходы", "nav:cats:income"), _btn("↘ Траты", "nav:cats:expense")],
-        [_back_btn()],
-    ])
-
-
-def categories_list_inline_keyboard(tx_type: str, top_cats: list[str]) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    for slug in top_cats[:8]:
-        emoji = CATEGORY_EMOJI.get(slug, "•")
-        label = formatter.category_label(slug)
-        rows.append([_btn(f"{emoji} {label}", f"nav:cats:detail:{slug}")])
-    rows.append([_back_btn("nav:cats"), _menu_btn()])
-    return InlineKeyboardMarkup(rows)
-
-
 # ---------------------------------------------------------------------------
 # Settings section
 # ---------------------------------------------------------------------------
@@ -327,15 +310,6 @@ def settings_nav_inline_keyboard() -> InlineKeyboardMarkup:
         [_back_btn()],
     ])
 
-
-def settings_keyboard() -> InlineKeyboardMarkup:
-    """Used by /settings command."""
-    return InlineKeyboardMarkup([
-        [_btn("⏰ Утреннее напоминание", "settings:morning")],
-        [_btn("🌙 Вечернее напоминание", "settings:evening")],
-        [_btn("🌍 Часовой пояс", "settings:timezone")],
-        [_btn("❌ Выключить напоминания", "settings:disable_all")],
-    ])
 
 
 def reminders_inline_keyboard() -> InlineKeyboardMarkup:
@@ -647,10 +621,3 @@ def suggestion_keyboard(suggestion_key: str) -> InlineKeyboardMarkup:
     ]])
 
 
-# ---------------------------------------------------------------------------
-# Compatibility shim — remove_reply_keyboard kept for any remaining callers
-# ---------------------------------------------------------------------------
-
-def remove_reply_keyboard() -> ReplyKeyboardRemove:
-    """Kept for backward compatibility. No longer used in new flows."""
-    return ReplyKeyboardRemove()

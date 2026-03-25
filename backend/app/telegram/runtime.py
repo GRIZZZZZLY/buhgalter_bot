@@ -51,7 +51,7 @@ from app.telegram.keyboards import (
     recurring_category_keyboard,
     recurring_manage_keyboard,
     saved_actions_keyboard,
-    settings_keyboard,
+    settings_nav_inline_keyboard,
     start_keyboard,
     suggestion_keyboard,
     undo_inline_keyboard,
@@ -585,7 +585,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     ]
     await update.effective_message.reply_text(
         "\n".join(lines),
-        reply_markup=settings_keyboard(),
+        reply_markup=settings_nav_inline_keyboard(),
     )
 
 
@@ -1612,7 +1612,21 @@ async def settings_callback_handler(update: Update, context: ContextTypes.DEFAUL
 
     action = query.data.split(":", 1)[1] if ":" in query.data else ""
 
-    if action == "budget":
+    if action == "budget_day":
+        context.user_data["awaiting_setting"] = "budget_day"
+        await query.edit_message_text(
+            "📅 Введи число начала бюджетного периода (1–28).\n"
+            "Например: 1 — с первого числа каждого месяца.",
+            reply_markup=cancel_keyboard("nav:settings"),
+        )
+    elif action == "reminders":
+        from app.telegram.keyboards import reminders_inline_keyboard
+        await query.edit_message_text(
+            "🔔 *Напоминания*\n\nВыбери что настроить:",
+            reply_markup=reminders_inline_keyboard(),
+            parse_mode="Markdown",
+        )
+    elif action == "budget":
         context.user_data["awaiting_setting"] = "budget"
         await query.edit_message_text(
             "💰 Введи месячный бюджет в рублях (например: 50000).\n"
@@ -2401,7 +2415,18 @@ def _handle_settings_input(telegram_user_id: int, setting: str, value: str) -> s
         if user is None:
             return "❌ Не нашёл пользователя."
 
-        if setting == "budget":
+        if setting == "budget_day":
+            try:
+                day = int(value)
+                if not (1 <= day <= 28):
+                    return "❌ Число должно быть от 1 до 28."
+                user_repo.update_settings(user, budget_start_day=day)
+                user_repo.commit()
+                return f"✅ Начало периода: {day}-е число"
+            except ValueError:
+                return "❌ Введи число от 1 до 28."
+
+        elif setting == "budget":
             try:
                 amount = float(value.replace(",", ".").replace(" ", ""))
                 if amount <= 0:
