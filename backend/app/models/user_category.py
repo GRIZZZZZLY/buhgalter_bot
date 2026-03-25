@@ -21,6 +21,7 @@ class UserCategory(Base):
     type: Mapped[str] = mapped_column(String(10), nullable=False)  # expense / income / both
     is_custom: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
