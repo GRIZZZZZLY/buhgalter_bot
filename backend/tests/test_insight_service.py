@@ -70,7 +70,7 @@ def test_category_spike_below_threshold():
 def test_budget_milestone_7_days():
     svc = _make_svc()
     user = _user(budget=30000.0)
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     per_day = {today - timedelta(days=i): Decimal("800") for i in range(7)}
     with patch.object(svc._repo, "sum_expenses_per_day", return_value=per_day):
         fact = svc._detect_budget_milestone(user)
