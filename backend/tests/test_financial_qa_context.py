@@ -85,3 +85,59 @@ def test_context_omits_empty_sections(db_session) -> None:
     assert "БЮДЖЕТЫ" not in context
     assert "ПЛАНОВЫЕ РАСХОДЫ" not in context
     assert "РЕГУЛЯРНЫЕ ПЛАТЕЖИ" not in context
+
+
+from datetime import datetime, timedelta
+from app.repositories.transaction_repository import TransactionRepository
+from app.models.transaction import Transaction, TransactionType, TransactionSource
+
+
+def test_monthly_summary_returns_3_months(db_session) -> None:
+    """monthly_summary() should return aggregated data for up to 3 months."""
+    _seed_user(db_session)
+    now = datetime.now()
+
+    tx1 = Transaction(
+        telegram_user_id=555, type=TransactionType.EXPENSE,
+        amount=1000, category="food", description="test",
+        source=TransactionSource.TEXT, raw_input="test", confidence=1.0,
+        created_at=now,
+    )
+    prev_month = (now.replace(day=1) - timedelta(days=1))
+    tx2 = Transaction(
+        telegram_user_id=555, type=TransactionType.EXPENSE,
+        amount=2000, category="food", description="test",
+        source=TransactionSource.TEXT, raw_input="test", confidence=1.0,
+        created_at=prev_month,
+    )
+    db_session.add_all([tx1, tx2])
+    db_session.commit()
+
+    repo = TransactionRepository(db_session)
+    result = repo.monthly_summary(555, months=3)
+
+    assert isinstance(result, list)
+    assert len(result) <= 3
+    for entry in result:
+        assert "year_month" in entry
+        assert "income" in entry
+        assert "expenses" in entry
+        assert "by_category" in entry
+
+
+def test_context_includes_monthly_stats(db_session) -> None:
+    """_build_context() should include multi-month statistics."""
+    _seed_user(db_session)
+    now = datetime.now()
+    tx = Transaction(
+        telegram_user_id=555, type=TransactionType.EXPENSE,
+        amount=5000, category="food", description="test",
+        source=TransactionSource.TEXT, raw_input="test", confidence=1.0,
+        created_at=now,
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    service = FinancialQAService(db_session)
+    context = service._build_context(555)
+    assert "ПОМЕСЯЧНАЯ СТАТИСТИКА" in context

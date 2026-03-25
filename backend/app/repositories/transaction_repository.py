@@ -160,6 +160,56 @@ class TransactionRepository:
         rows = self.db.execute(stmt).all()
         return {date.fromisoformat(row.day): Decimal(str(row.total)) for row in rows}
 
+    def monthly_summary(self, telegram_user_id: int, months: int = 3) -> list[dict]:
+        """Return per-month income/expense totals and category breakdowns for the last N months.
+
+        Uses Python-side aggregation for database portability (SQLite dev / PostgreSQL prod).
+        """
+        now = datetime.now()
+        start_month = now.month - months + 1
+        start_year = now.year
+        while start_month <= 0:
+            start_month += 12
+            start_year -= 1
+        start = datetime(start_year, start_month, 1)
+
+        stmt = (
+            select(Transaction)
+            .where(
+                Transaction.telegram_user_id == telegram_user_id,
+                Transaction.created_at >= start,
+            )
+            .order_by(Transaction.created_at.desc())
+        )
+        transactions = self.db.scalars(stmt).all()
+
+        from collections import defaultdict
+        months_data: dict[str, dict] = defaultdict(
+            lambda: {"income": Decimal(0), "expenses": Decimal(0), "by_category": defaultdict(Decimal)}
+        )
+
+        for tx in transactions:
+            ym = tx.created_at.strftime("%Y-%m")
+            entry = months_data[ym]
+            amount = Decimal(str(tx.amount))
+            if tx.type == TransactionType.INCOME:
+                entry["income"] += amount
+            else:
+                entry["expenses"] += amount
+                entry["by_category"][tx.category] += amount
+
+        result = []
+        for ym in sorted(months_data.keys(), reverse=True):
+            d = months_data[ym]
+            by_cat = dict(sorted(d["by_category"].items(), key=lambda kv: kv[1], reverse=True)[:10])
+            result.append({
+                "year_month": ym,
+                "income": d["income"],
+                "expenses": d["expenses"],
+                "by_category": by_cat,
+            })
+        return result
+
     @staticmethod
     def _build_period_filter(period: str):
         if period == "all":

@@ -90,6 +90,21 @@ class FinancialQAService:
             f"\nПоследние транзакции:\n{recent_lines}",
         ]
 
+        # Monthly stats (3 months)
+        monthly = repo.monthly_summary(telegram_user_id, months=3)
+        if monthly:
+            monthly_lines = []
+            for m in monthly:
+                cat_str = ", ".join(
+                    f"{cat}: {amt:.0f}₽"
+                    for cat, amt in m["by_category"].items()
+                )
+                monthly_lines.append(
+                    f"  {m['year_month']}: доходы {m['income']:.0f}₽, расходы {m['expenses']:.0f}₽"
+                    + (f"\n    {cat_str}" if cat_str else "")
+                )
+            sections.append("\nПОМЕСЯЧНАЯ СТАТИСТИКА:\n" + "\n".join(monthly_lines))
+
         # Budgets
         budget_repo = CategoryBudgetRepository(self.db)
         budgets = budget_repo.get_all_for_user(telegram_user_id)
