@@ -203,11 +203,11 @@ async def improve_categories_command(update: Update, context: ContextTypes.DEFAU
             svc = TelegramBotService(db)
             results = svc.improve_categories(update.effective_user.id)
     except Exception as exc:
-        await update.effective_message.reply_text(f"Ошибка при анализе: {exc}")
+        await update.effective_message.reply_text(f"Ошибка при анализе: {exc}", reply_markup=done_keyboard())
         return
 
     if not results:
-        await update.effective_message.reply_text("Предложений нет.")
+        await update.effective_message.reply_text("Предложений нет.", reply_markup=done_keyboard())
         return
 
     for item in results:
@@ -525,7 +525,7 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     with SessionLocal() as db:
         _ensure_user(db, update)
         answer = FinancialQAService(db).answer(question, update.effective_user.id)
-    await update.effective_message.reply_text(answer)
+    await update.effective_message.reply_text(answer, reply_markup=advisor_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -738,7 +738,7 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not items:
         period_label = {"today": "сегодня", "week": "за неделю", "month": "за месяц", "all": "за всё время"}.get(period, period)
-        await update.effective_message.reply_text(f"Записей {period_label} нет.")
+        await update.effective_message.reply_text(f"Записей {period_label} нет.", reply_markup=done_keyboard())
         return
 
     buf = io.StringIO()
@@ -799,7 +799,7 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             category=category_slug,
             planned_date=parsed["planned_date"].isoformat(),
         )
-    await update.effective_message.reply_text(response["message"])
+    await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
 
 
 async def planned_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -836,19 +836,19 @@ async def planned_callback_handler(update: Update, context: ContextTypes.DEFAULT
     user_id = update.effective_user.id
 
     if not planned_id:
-        await query.edit_message_text("Некорректный planned expense.")
+        await query.edit_message_text("Некорректный planned expense.", reply_markup=done_keyboard(back_target="nav:planned_list"))
         return
 
     if action == "edit_amount":
         if context.user_data is not None:
             context.user_data["awaiting_planned_amount"] = planned_id
-        await query.edit_message_text("Введи новую сумму для учёта:")
+        await query.edit_message_text("Введи новую сумму для учёта:", reply_markup=cancel_keyboard("nav:planned_list"))
         return
 
     if action == "edit_date":
         if context.user_data is not None:
             context.user_data["awaiting_planned_date"] = planned_id
-        await query.edit_message_text("Введи новую дату: 15.04 или 2030-04-15")
+        await query.edit_message_text("Введи новую дату: 15.04 или 2030-04-15", reply_markup=cancel_keyboard("nav:planned_list"))
         return
 
     with SessionLocal() as db:
@@ -860,7 +860,7 @@ async def planned_callback_handler(update: Update, context: ContextTypes.DEFAULT
         else:
             response = {"action": "planned_missing", "message": "Неизвестное действие."}
 
-    await query.edit_message_text(response["message"])
+    await query.edit_message_text(response["message"], reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -1678,14 +1678,16 @@ async def _handle_planned_input(
 
     if result is None:
         await update.effective_message.reply_text(
-            "❌ Не смог разобрать. Попробуй ещё раз."
+            "❌ Не смог разобрать. Попробуй ещё раз.",
+            reply_markup=done_keyboard(),
         )
         return
 
     planned_date_iso = result.get("planned_date_iso")
     if not planned_date_iso:
         await update.effective_message.reply_text(
-            "❌ Не понял дату. Укажи, например: «15 апреля» или «через 2 недели»."
+            "❌ Не понял дату. Укажи, например: «15 апреля» или «через 2 недели».",
+            reply_markup=done_keyboard(),
         )
         return
 
@@ -1693,13 +1695,15 @@ async def _handle_planned_input(
         planned_date = _date.fromisoformat(planned_date_iso)
     except ValueError:
         await update.effective_message.reply_text(
-            "❌ Не понял дату. Укажи, например: «15 апреля» или «через 2 недели»."
+            "❌ Не понял дату. Укажи, например: «15 апреля» или «через 2 недели».",
+            reply_markup=done_keyboard(),
         )
         return
 
     if planned_date < _date.today():
         await update.effective_message.reply_text(
-            "❌ Дата уже прошла. Укажи будущую дату."
+            "❌ Дата уже прошла. Укажи будущую дату.",
+            reply_markup=done_keyboard(),
         )
         return
 
@@ -1761,7 +1765,8 @@ async def _handle_recurring_input(
 
     if result is None:
         await update.effective_message.reply_text(
-            "❌ Не смог разобрать. Попробуй ещё раз."
+            "❌ Не смог разобрать. Попробуй ещё раз.",
+            reply_markup=done_keyboard(),
         )
         return
 
@@ -1769,7 +1774,8 @@ async def _handle_recurring_input(
     missing = [k for k in required_keys if result.get(k) is None]
     if missing:
         await update.effective_message.reply_text(
-            f"❌ Не понял: {', '.join(missing)}. Попробуй ещё раз."
+            f"❌ Не понял: {', '.join(missing)}. Попробуй ещё раз.",
+            reply_markup=done_keyboard(),
         )
         return
 
@@ -1847,7 +1853,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if awaiting:
         del context.user_data["awaiting_setting"]
         result = _handle_settings_input(update.effective_user.id, awaiting, text.strip())
-        await update.effective_message.reply_text(result)
+        await update.effective_message.reply_text(result, reply_markup=done_keyboard(back_target="nav:settings"))
         return
 
     # Handle /edit awaiting amount input
@@ -1881,7 +1887,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 reply_markup=edit_item_keyboard(tx_id),
             )
         else:
-            await update.effective_message.reply_text("❌ Запись не найдена.")
+            await update.effective_message.reply_text("❌ Запись не найдена.", reply_markup=done_keyboard())
         return
 
     # Handle planned expense custom amount confirmation
@@ -1894,7 +1900,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             if amount <= 0:
                 raise ValueError
         except ValueError:
-            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 2500")
+            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 2500", reply_markup=done_keyboard())
             return
 
         with SessionLocal() as db:
@@ -1905,7 +1911,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 planned_expense_id=int(awaiting_planned_amount),
                 actual_amount=amount,
             )
-        await update.effective_message.reply_text(response["message"])
+        await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
         return
 
     awaiting_planned_date = context.user_data.get("awaiting_planned_date") if context.user_data else None
@@ -1923,7 +1929,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             if parsed_date < date.today():
                 raise ValueError
         except Exception:
-            await update.effective_message.reply_text("❌ Не понял дату. Формат: 15.04 или 2030-04-15")
+            await update.effective_message.reply_text("❌ Не понял дату. Формат: 15.04 или 2030-04-15", reply_markup=done_keyboard())
             return
 
         with SessionLocal() as db:
@@ -1934,7 +1940,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 planned_expense_id=int(awaiting_planned_date),
                 planned_date=parsed_date.isoformat(),
             )
-        await update.effective_message.reply_text(response["message"])
+        await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
         return
 
     # --- Category: rename ---
@@ -1949,10 +1955,11 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             cat = svc.rename(update.effective_user.id, awaiting_rename, text.strip())
         if cat:
             await update.effective_message.reply_text(
-                f"✅ Переименовано: {cat.emoji} {cat.name_ru}"
+                f"✅ Переименовано: {cat.emoji} {cat.name_ru}",
+                reply_markup=done_keyboard(),
             )
         else:
-            await update.effective_message.reply_text("❌ Категория не найдена.")
+            await update.effective_message.reply_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target="nav:categories"))
         return
 
     # --- Category: change emoji ---
@@ -1967,13 +1974,13 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             try:
                 cat = svc.change_emoji(update.effective_user.id, awaiting_emoji, text.strip())
             except ValueError as e:
-                await update.effective_message.reply_text(f"❌ {e} Попробуй ещё раз.")
+                await update.effective_message.reply_text(f"❌ {e} Попробуй ещё раз.", reply_markup=done_keyboard(back_target="nav:categories"))
                 context.user_data["awaiting_category_emoji"] = awaiting_emoji
                 return
         if cat:
-            await update.effective_message.reply_text(f"✅ Emoji обновлён: {cat.emoji} {cat.name_ru}")
+            await update.effective_message.reply_text(f"✅ Emoji обновлён: {cat.emoji} {cat.name_ru}", reply_markup=done_keyboard())
         else:
-            await update.effective_message.reply_text("❌ Категория не найдена.")
+            await update.effective_message.reply_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target="nav:categories"))
         return
 
     # --- Category: add (name or emoji step) ---
@@ -2013,7 +2020,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             if amount <= 0:
                 raise ValueError
         except ValueError:
-            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 2500")
+            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 2500", reply_markup=done_keyboard())
             return
 
         with SessionLocal() as db:
@@ -2024,7 +2031,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 recurring_id=int(awaiting_recurring_amount),
                 amount=amount,
             )
-        await update.effective_message.reply_text(response["message"])
+        await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
         return
 
     awaiting_recurring_schedule = context.user_data.get("awaiting_recurring_schedule") if context.user_data else None
@@ -2056,7 +2063,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             if amount <= 0:
                 raise ValueError
         except ValueError:
-            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 500")
+            await update.effective_message.reply_text("❌ Не понял сумму. Введи число, например: 500", reply_markup=done_keyboard())
             return
 
         with SessionLocal() as db:
@@ -2166,6 +2173,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.effective_message.reply_text(
         response["message"],
         parse_mode="HTML",
+        reply_markup=done_keyboard(),
     )
 
 
@@ -2176,7 +2184,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     voice = update.effective_message.voice
     if voice is None:
-        await update.effective_message.reply_text("Не нашёл voice payload.")
+        await update.effective_message.reply_text("Не нашёл voice payload.", reply_markup=done_keyboard())
         return
 
     placeholder = await update.effective_message.reply_text("🎤 Обрабатываю голосовое…")
@@ -2210,12 +2218,14 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     await _handle_budget_category_input(update, context, transcribed)
             else:
                 await update.effective_message.reply_text(
-                    "❌ Не удалось распознать речь. Попробуй ещё раз."
+                    "❌ Не удалось распознать речь. Попробуй ещё раз.",
+                    reply_markup=done_keyboard(),
                 )
         except Exception as exc:
             logger.error("voice mode input error: %s", exc)
             await update.effective_message.reply_text(
-                "❌ Не смог обработать голосовое. Попробуй ещё раз."
+                "❌ Не смог обработать голосовое. Попробуй ещё раз.",
+                reply_markup=done_keyboard(),
             )
         finally:
             from pathlib import Path as _Path
@@ -2285,7 +2295,7 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    await update.effective_message.reply_text(response["message"], parse_mode="HTML")
+    await update.effective_message.reply_text(response["message"], parse_mode="HTML", reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -2304,7 +2314,7 @@ async def voice_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     try:
         _, action, voice_log_id = query.data.split(":", 2)
     except ValueError:
-        await query.edit_message_text("Некорректный callback payload.")
+        await query.edit_message_text("Некорректный callback payload.", reply_markup=done_keyboard())
         return
 
     with SessionLocal() as db:
@@ -2335,10 +2345,10 @@ async def voice_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     tx_ids = response.get("saved_transaction_ids", [])
     if response.get("action") == "voice_confirmed" and tx_ids:
-        await query.edit_message_text(response["message"], parse_mode="HTML")
+        await query.edit_message_text(response["message"], parse_mode="HTML", reply_markup=done_keyboard())
         await _send_saved_with_undo(update, context, response["message"], list(tx_ids))
     else:
-        await query.edit_message_text(response["message"], parse_mode="HTML")
+        await query.edit_message_text(response["message"], parse_mode="HTML", reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -2366,7 +2376,7 @@ async def delete_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         else:
             response = {"action": "delete_unknown", "message": "Неизвестное действие удаления."}
 
-    await query.edit_message_text(response["message"])
+    await query.edit_message_text(response["message"], reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -2458,7 +2468,8 @@ async def _handle_budget_total_input(
 
     if amount is None or amount <= 0:
         await update.effective_message.reply_text(
-            "❌ Не смог распознать сумму. Попробуй ещё раз."
+            "❌ Не смог распознать сумму. Попробуй ещё раз.",
+            reply_markup=done_keyboard(back_target="nav:budgets"),
         )
         return
 
@@ -2485,7 +2496,8 @@ async def _handle_budget_category_input(
 
     if amount is None or amount < 0:
         await update.effective_message.reply_text(
-            "❌ Не смог распознать сумму. Попробуй ещё раз."
+            "❌ Не смог распознать сумму. Попробуй ещё раз.",
+            reply_markup=done_keyboard(back_target="nav:budgets"),
         )
         return
 
