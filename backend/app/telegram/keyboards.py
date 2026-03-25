@@ -68,7 +68,6 @@ def cancel_keyboard(back_target: str) -> InlineKeyboardMarkup:
 # Main menu — inline keyboard
 # ---------------------------------------------------------------------------
 
-MENU_BTN_OPS      = "📋 Операции"
 MENU_BTN_PLANNED  = "📋 Запланированные"
 MENU_BTN_RECURRING = "🔄 Регулярные"
 MENU_BTN_BUDGETS  = "💰 Бюджеты"
@@ -87,11 +86,17 @@ def main_menu_inline_keyboard() -> InlineKeyboardMarkup:
 
 
 def planned_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[_menu_btn()]])
+    return InlineKeyboardMarkup([
+        [_btn("➕ Добавить", "nav:planned_input")],
+        [_back_btn(), _menu_btn()],
+    ])
 
 
 def recurring_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[_menu_btn()]])
+    return InlineKeyboardMarkup([
+        [_btn("➕ Добавить", "nav:recurring_input")],
+        [_back_btn(), _menu_btn()],
+    ])
 
 
 def planned_input_keyboard() -> InlineKeyboardMarkup:
@@ -305,8 +310,6 @@ def settings_nav_inline_keyboard() -> InlineKeyboardMarkup:
         [_btn("📅 Начало периода", "settings:budget_day")],
         [_btn("🔔 Напоминания", "settings:reminders")],
         [_btn("🌍 Часовой пояс", "settings:timezone")],
-        [_btn("⏰ Утреннее", "settings:morning"), _btn("🌙 Вечернее", "settings:evening")],
-        [_btn("❌ Выключить все", "settings:disable_all")],
         [_back_btn()],
     ])
 
@@ -575,7 +578,10 @@ def saved_actions_keyboard(transaction_id: str) -> InlineKeyboardMarkup:
 
 def category_grid_keyboard(transaction_id: str, categories: list[str]) -> InlineKeyboardMarkup:
     buttons = [
-        InlineKeyboardButton(slug, callback_data=f"catfix:set:{transaction_id}:{slug}")
+        InlineKeyboardButton(
+            f"{CATEGORY_EMOJI.get(slug, '•')} {formatter.category_label(slug)}",
+            callback_data=f"catfix:set:{transaction_id}:{slug}",
+        )
         for slug in categories
     ]
     rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
