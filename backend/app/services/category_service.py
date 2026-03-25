@@ -107,6 +107,26 @@ class CategoryService:
         self.db.commit()
         return updated
 
+    def toggle_hidden(self, telegram_user_id: int, slug: str) -> "UserCategory | None":
+        """Toggle is_hidden on a category. Seeds built-ins first if not yet seeded."""
+        cat = self._repo.get_by_slug(telegram_user_id, slug)
+        if cat is None:
+            self.ensure_seeded(telegram_user_id)
+            cat = self._repo.get_by_slug(telegram_user_id, slug)
+        if cat is None:
+            return None
+        updated = self._repo.update(cat.id, is_hidden=not cat.is_hidden)
+        self.db.commit()
+        return updated
+
+    def get_visible_for_type(self, telegram_user_id: int, tx_type: str) -> "list[UserCategory]":
+        """Return non-hidden categories matching tx_type or 'both'."""
+        all_cats = self._repo.get_all(telegram_user_id)
+        return [
+            c for c in all_cats
+            if not c.is_hidden and c.type in (tx_type, "both")
+        ]
+
     def count_transactions(self, telegram_user_id: int, slug: str) -> int:
         from sqlalchemy import func, select
         stmt = select(func.count()).where(

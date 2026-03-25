@@ -103,9 +103,9 @@ class UserCategoryRepository:
                 text(
                     "INSERT INTO user_categories "
                     "(telegram_user_id, slug, name_ru, emoji, type, is_custom, sort_order, "
-                    " created_at, updated_at) "
+                    " is_hidden, created_at, updated_at) "
                     "VALUES (:uid, :slug, :name, :emoji, :type, 0, :order, "
-                    " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+                    " 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
                     "ON CONFLICT (telegram_user_id, slug) DO NOTHING"
                 ),
                 {
