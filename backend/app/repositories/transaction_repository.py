@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -183,7 +184,6 @@ class TransactionRepository:
         )
         transactions = self.db.scalars(stmt).all()
 
-        from collections import defaultdict
         months_data: dict[str, dict] = defaultdict(
             lambda: {"income": Decimal(0), "expenses": Decimal(0), "by_category": defaultdict(Decimal)}
         )
