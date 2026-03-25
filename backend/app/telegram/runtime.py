@@ -303,7 +303,7 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
         text = f"✏️ *{cat.emoji} {cat.name_ru}*\n\nЧто изменить?"
         await query.edit_message_text(
             text,
-            reply_markup=category_edit_keyboard(slug, cat.is_custom),
+            reply_markup=category_edit_keyboard(slug, cat.is_custom, cat.is_hidden),
             parse_mode="Markdown",
         )
         return
@@ -425,6 +425,24 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
                 await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target="nav:categories"))
                 return
         await query.edit_message_text("✅ Транзакции перенесены, категория удалена.", reply_markup=done_keyboard())
+        return
+
+    if action == "toggle_hidden":
+        slug = param
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = CategoryService(db)
+            cat = svc.toggle_hidden(user_id, slug)
+        if cat is None:
+            await query.answer("❌ Категория не найдена", show_alert=True)
+            return
+        state = "скрыта" if cat.is_hidden else "показана"
+        text = f"{'🙈' if cat.is_hidden else '👁'} *{cat.emoji} {cat.name_ru}* — категория {state}.\n\nЧто изменить?"
+        await query.edit_message_text(
+            text,
+            reply_markup=category_edit_keyboard(slug, cat.is_custom, cat.is_hidden),
+            parse_mode="Markdown",
+        )
         return
 
 
