@@ -1194,10 +1194,7 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         with SessionLocal() as db:
             nav = NavService(db)
 
-            if section == "balance":
-                period = sub if sub in ("today", "week", "month", "all") else "month"
-                screen = nav.balance_screen(user_id, period)
-            elif section == "stats":
+            if section == "stats":
                 period = sub if sub in ("today", "week", "month", "all") else "month"
                 screen = nav.stats_screen(user_id, period)
             elif section == "ops":

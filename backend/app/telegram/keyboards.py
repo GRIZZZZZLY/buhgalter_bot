@@ -263,13 +263,6 @@ def _period_row(section: str, current: str) -> list[InlineKeyboardButton]:
     ]
 
 
-def balance_inline_keyboard(period: str = "month") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        _period_row("balance", period),
-        [_btn("📊 Статистика", "nav:stats"), _menu_btn()],
-    ])
-
-
 def stats_inline_keyboard(period: str = "month") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         _period_row("stats", period),

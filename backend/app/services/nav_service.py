@@ -18,7 +18,6 @@ from app.repositories.user_repository import UserRepository
 from app.telegram.formatter import TreasuryFormatter
 from app.services.category_service import CategoryService
 from app.telegram.keyboards import (
-    balance_inline_keyboard,
     budgets_inline_keyboard,
     help_inline_keyboard,
     operations_delete_keyboard,
@@ -48,19 +47,6 @@ class NavService:
         self.mapping_repo = UserCategoryMappingRepository(db)
         self.planned_service = PlannedExpenseService(db)
         self.recurring_service = RecurringService(db)
-
-    # ------------------------------------------------------------------
-    # Balance
-    # ------------------------------------------------------------------
-    def balance_screen(self, telegram_user_id: int, period: str = "month") -> NavScreen:
-        summary = self.tx_repo.get_summary(telegram_user_id, period)
-        text = formatter.format_balance_screen(
-            income_total=f"{float(summary['income_total']):,.0f}",
-            expense_total=f"{float(summary['expense_total']):,.0f}",
-            balance=f"{float(summary['balance']):,.0f}",
-            period=period,
-        )
-        return NavScreen(text=text, keyboard=balance_inline_keyboard(period))
 
     # ------------------------------------------------------------------
     # Statistics
