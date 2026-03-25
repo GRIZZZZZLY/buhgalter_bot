@@ -1084,7 +1084,7 @@ async def checkin_callback_handler(update: Update, context: ContextTypes.DEFAULT
     action = parts[1] if len(parts) > 1 else ""
 
     if action == "none":
-        await query.edit_message_text("👍 Хорошо, пустой день.")
+        await query.edit_message_text("👍 Хорошо, пустой день.", reply_markup=done_keyboard())
         return
 
     if action == "cat" and len(parts) > 2:
@@ -1126,7 +1126,7 @@ async def checkin_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
         balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
         msg = formatter.format_saved("расход", str(item.amount), item.category, balance)
-        await query.edit_message_text(msg, parse_mode="HTML")
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=done_keyboard())
         await _send_saved_with_undo(update, context, msg, [str(item.id)])
         return
 
@@ -1136,10 +1136,10 @@ async def checkin_callback_handler(update: Update, context: ContextTypes.DEFAULT
         if context.user_data is not None:
             context.user_data["awaiting_checkin_category"] = cat_slug
         cat_label = formatter.category_label(cat_slug)
-        await query.edit_message_text(f"{cat_label} — введи сумму:")
+        await query.edit_message_text(f"{cat_label} — введи сумму:", reply_markup=cancel_keyboard("checkin:none"))
         return
 
-    await query.edit_message_text("Хорошо!")
+    await query.edit_message_text("Хорошо!", reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -1267,7 +1267,7 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await _nav_send_or_edit(query, update, screen)
     except Exception as exc:
         logger.exception("nav_callback error section=%s: %s", section, exc)
-        await update.effective_chat.send_message("❌ Ошибка при открытии раздела. Попробуй ещё раз.")
+        await update.effective_chat.send_message("❌ Ошибка при открытии раздела. Попробуй ещё раз.", reply_markup=done_keyboard())
 
 
 async def planned_input_callback_handler(
@@ -1408,13 +1408,13 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user = user_repo.get_by_telegram_id(update.effective_user.id)
 
         if user is None:
-            await update.effective_message.reply_text("❌ Не нашёл пользователя.")
+            await update.effective_message.reply_text("❌ Не нашёл пользователя.", reply_markup=done_keyboard())
             return
 
         if not context.args or len(context.args) == 0:
             analytics = AnalyticsService(db)
             report = analytics.build_budget_report(user)
-            await update.effective_message.reply_text(report)
+            await update.effective_message.reply_text(report, reply_markup=done_keyboard(back_target="nav:budgets"))
             return
 
         if len(context.args) < 2:
@@ -1437,7 +1437,7 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         try:
             amount = float(amount_text.replace(",", ".").replace(" ", ""))
         except ValueError:
-            await update.effective_message.reply_text(f"❌ Не понял сумму: {amount_text}. Введи число.")
+            await update.effective_message.reply_text(f"❌ Не понял сумму: {amount_text}. Введи число.", reply_markup=done_keyboard(back_target="nav:budgets"))
             return
 
         budget_repo = CategoryBudgetRepository(db)
@@ -1447,14 +1447,14 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             removed = budget_repo.remove(user.telegram_user_id, resolved_category)
             db.commit()
             if removed:
-                await update.effective_message.reply_text(f"✅ Бюджет «{cat_label}» удалён.")
+                await update.effective_message.reply_text(f"✅ Бюджет «{cat_label}» удалён.", reply_markup=done_keyboard(back_target="nav:budgets"))
             else:
-                await update.effective_message.reply_text(f"Бюджет «{cat_label}» не был установлен.")
+                await update.effective_message.reply_text(f"Бюджет «{cat_label}» не был установлен.", reply_markup=done_keyboard(back_target="nav:budgets"))
             return
 
         budget_repo.upsert(user.telegram_user_id, resolved_category, amount)
         db.commit()
-        await update.effective_message.reply_text(f"✅ Бюджет «{cat_label}»: {amount:,.0f} ₽/мес")
+        await update.effective_message.reply_text(f"✅ Бюджет «{cat_label}»: {amount:,.0f} ₽/мес", reply_markup=done_keyboard(back_target="nav:budgets"))
 
 
 async def _check_and_send_budget_alert(
@@ -1463,7 +1463,7 @@ async def _check_and_send_budget_alert(
     analytics = AnalyticsService(db)
     alert = analytics.check_budget_alert(telegram_user_id, category)
     if alert:
-        await update.effective_message.reply_text(alert)
+        await update.effective_message.reply_text(alert, reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -1478,7 +1478,7 @@ async def recurring_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not context.args:
             items = svc.list_active(update.effective_user.id)
             if not items:
-                await update.effective_message.reply_text(svc.format_list(items))
+                await update.effective_message.reply_text(svc.format_list(items), reply_markup=done_keyboard())
                 return
             await update.effective_message.reply_text("📋 Правила регулярных операций:")
             for rt in items[:5]:
@@ -1496,7 +1496,7 @@ async def recurring_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         parsed = parse_recurring_args(list(context.args))
         if isinstance(parsed, str):
-            await update.effective_message.reply_text(parsed)
+            await update.effective_message.reply_text(parsed, reply_markup=done_keyboard())
             return
 
         from app.services.parser_service import ParserService
@@ -1512,7 +1512,7 @@ async def recurring_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             frequency=parsed["frequency"],
             day_value=parsed["day_value"],
         )
-        await update.effective_message.reply_text(svc.format_created(rt))
+        await update.effective_message.reply_text(svc.format_created(rt), reply_markup=done_keyboard())
 
 
 async def recurring_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1530,19 +1530,19 @@ async def recurring_callback_handler(update: Update, context: ContextTypes.DEFAU
     extra = parts[3] if len(parts) > 3 else ""
 
     if not recurring_id:
-        await query.edit_message_text("Некорректное правило recurring.")
+        await query.edit_message_text("Некорректное правило recurring.", reply_markup=done_keyboard(back_target="nav:recurring_list"))
         return
 
     if action == "amount":
         if context.user_data is not None:
             context.user_data["awaiting_recurring_amount"] = recurring_id
-        await query.edit_message_text("Введи новую сумму для правила:")
+        await query.edit_message_text("Введи новую сумму для правила:", reply_markup=cancel_keyboard("nav:recurring_list"))
         return
 
     if action == "schedule":
         if context.user_data is not None:
             context.user_data["awaiting_recurring_schedule"] = recurring_id
-        await query.edit_message_text("Введи новый период: ежемесячно 10 / еженедельно 4 / каждые 30")
+        await query.edit_message_text("Введи новый период: ежемесячно 10 / еженедельно 4 / каждые 30", reply_markup=cancel_keyboard("nav:recurring_list"))
         return
 
     if action == "category":
@@ -1566,18 +1566,18 @@ async def recurring_callback_handler(update: Update, context: ContextTypes.DEFAU
         else:
             response = {"action": "recurring_missing", "message": "Неизвестное действие."}
 
-    await query.edit_message_text(response["message"])
+    await query.edit_message_text(response["message"], reply_markup=done_keyboard())
 
 
 async def recurring_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.effective_message.reply_text("Формат: /recurring_del <номер>\nСписок: /recurring")
+        await update.effective_message.reply_text("Формат: /recurring_del <номер>\nСписок: /recurring", reply_markup=done_keyboard())
         return
 
     try:
         rt_id = int(context.args[0])
     except ValueError:
-        await update.effective_message.reply_text(f"❌ Номер должен быть числом, получил: {context.args[0]}")
+        await update.effective_message.reply_text(f"❌ Номер должен быть числом, получил: {context.args[0]}", reply_markup=done_keyboard())
         return
 
     with SessionLocal() as db:
@@ -1585,9 +1585,9 @@ async def recurring_del_command(update: Update, context: ContextTypes.DEFAULT_TY
         ok = svc.deactivate(update.effective_user.id, rt_id)
 
     if ok:
-        await update.effective_message.reply_text(f"✅ Повторяющаяся транзакция #{rt_id} удалена.")
+        await update.effective_message.reply_text(f"✅ Повторяющаяся транзакция #{rt_id} удалена.", reply_markup=done_keyboard())
     else:
-        await update.effective_message.reply_text(f"❌ Транзакция #{rt_id} не найдена.")
+        await update.effective_message.reply_text(f"❌ Транзакция #{rt_id} не найдена.", reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -1615,19 +1615,22 @@ async def settings_callback_handler(update: Update, context: ContextTypes.DEFAUL
         context.user_data["awaiting_setting"] = "morning"
         await query.edit_message_text(
             "⏰ Введи время утреннего напоминания в формате ЧЧ:ММ (например: 09:00).\n"
-            "Или отправь «выкл» чтобы отключить."
+            "Или отправь «выкл» чтобы отключить.",
+            reply_markup=cancel_keyboard("nav:settings"),
         )
     elif action == "evening":
         context.user_data["awaiting_setting"] = "evening"
         await query.edit_message_text(
             "🌙 Введи время вечернего напоминания в формате ЧЧ:ММ (например: 21:00).\n"
-            "Или отправь «выкл» чтобы отключить."
+            "Или отправь «выкл» чтобы отключить.",
+            reply_markup=cancel_keyboard("nav:settings"),
         )
     elif action == "timezone":
         context.user_data["awaiting_setting"] = "timezone"
         await query.edit_message_text(
             "🌍 Введи часовой пояс (например: Europe/Moscow, Asia/Yekaterinburg).\n"
-            "Полный список: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones"
+            "Полный список: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones",
+            reply_markup=cancel_keyboard("nav:settings"),
         )
     elif action == "disable_all":
         with SessionLocal() as db:
@@ -1636,7 +1639,7 @@ async def settings_callback_handler(update: Update, context: ContextTypes.DEFAUL
             if user:
                 user_repo.update_settings(user, reminder_morning=None, reminder_evening=None)
                 user_repo.commit()
-        await query.edit_message_text("✅ Все напоминания отключены. Включить обратно: /settings")
+        await query.edit_message_text("✅ Все напоминания отключены. Включить обратно: /settings", reply_markup=done_keyboard(back_target="nav:settings"))
 
 
 # ---------------------------------------------------------------------------
