@@ -1,4 +1,5 @@
 """Tests for expanded FinancialQAService context."""
+from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -64,7 +65,7 @@ def test_context_includes_recurring(db_session) -> None:
         frequency="monthly",
         day_value=1,
         is_active=1,
-        next_run_date="2026-04-01",
+        next_run_date=date(2026, 4, 1),
     )
     db_session.add(rt)
     db_session.commit()
