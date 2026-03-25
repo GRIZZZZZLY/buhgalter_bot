@@ -30,17 +30,18 @@ class FinancialQAService:
         )
         self._model = settings.llm_model
 
-    def answer(self, question: str, telegram_user_id: int) -> str:
+    def answer(self, question: str, telegram_user_id: int, history: list[dict] | None = None) -> str:
         """Answer a financial question using the user's real transaction data."""
         context = self._build_context(telegram_user_id)
         system = self._build_system_prompt(context)
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": question})
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": question},
-                ],
+                messages=messages,
                 response_format={"type": "json_object"},
                 temperature=0.3,
             )
