@@ -1178,6 +1178,11 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     extra   = parts[3] if len(parts) > 3 else ""
     user_id = update.effective_user.id
 
+    # Clear any pending input states when navigating
+    for key in list(context.user_data.keys()):
+        if key.startswith("awaiting_"):
+            del context.user_data[key]
+
     # Clear any pending input mode on navigation
     if context.user_data:
         context.user_data.pop("mode", None)
@@ -1609,7 +1614,8 @@ async def settings_callback_handler(update: Update, context: ContextTypes.DEFAUL
         context.user_data["awaiting_setting"] = "budget"
         await query.edit_message_text(
             "💰 Введи месячный бюджет в рублях (например: 50000).\n"
-            "Или отправь 0 чтобы убрать бюджет."
+            "Или отправь 0 чтобы убрать бюджет.",
+            reply_markup=cancel_keyboard("nav:settings"),
         )
     elif action == "morning":
         context.user_data["awaiting_setting"] = "morning"
@@ -1867,7 +1873,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 raise ValueError
         except ValueError:
             await update.effective_message.reply_text(
-                f"❌ Не понял сумму: {text.strip()}\nВведи число, например: 750"
+                f"❌ Не понял сумму: {text.strip()}\nВведи число, например: 750",
+                reply_markup=done_keyboard(),
             )
             return
 
@@ -1989,7 +1996,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["awaiting_category_add"] = "emoji"
         context.user_data["pending_category_add"] = {"name_ru": text.strip(), "emoji": ""}
         await update.effective_message.reply_text(
-            f"Название: «{text.strip()}»\n\nТеперь отправь emoji для этой категории:"
+            f"Название: «{text.strip()}»\n\nТеперь отправь emoji для этой категории:",
+            reply_markup=cancel_keyboard("nav:categories"),
         )
         return
     if awaiting_add == "emoji":
@@ -1997,7 +2005,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         emoji_input = text.strip()
         if not _is_emoji(emoji_input):
             await update.effective_message.reply_text(
-                "❌ Не похоже на emoji. Попробуй ещё раз (например: 🏋 или ⚽):"
+                "❌ Не похоже на emoji. Попробуй ещё раз (например: 🏋 или ⚽):",
+                reply_markup=cancel_keyboard("nav:categories"),
             )
             return
         pending = context.user_data.get("pending_category_add", {})
@@ -2039,7 +2048,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         del context.user_data["awaiting_recurring_schedule"]
         parsed = parse_recurring_schedule_args(text.strip().split())
         if isinstance(parsed, str):
-            await update.effective_message.reply_text(parsed)
+            await update.effective_message.reply_text(parsed, reply_markup=done_keyboard())
             return
         with SessionLocal() as db:
             _ensure_user(db, update)
@@ -2050,7 +2059,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 frequency=parsed["frequency"],
                 day_value=parsed["day_value"],
             )
-        await update.effective_message.reply_text(response["message"])
+        await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
         return
 
     # Handle evening check-in custom amount
