@@ -56,13 +56,18 @@ Keyboard signature changes to:
 def category_edit_keyboard(slug: str, is_custom: bool, is_hidden: bool) -> InlineKeyboardMarkup
 ```
 
+**Update all call sites** of `category_edit_keyboard` in `runtime.py` to pass `is_hidden` — look up the current category row before building the keyboard.
+
 #### 4. Handler: `categories:toggle_hidden:{slug}`
 
 In `categories_callback_handler`:
 ```
 categories:toggle_hidden:{slug}
-  → CategoryService.toggle_hidden(user_id, slug)
-  → edit message to updated category screen
+  → result = CategoryService.toggle_hidden(user_id, slug)
+  → if result is None:
+      → answer callback with "Категория не найдена" (no message edit)
+  → else:
+      → edit message to updated category screen with new is_hidden state
 ```
 
 #### 5. Apply `is_hidden` filter in selection keyboards
@@ -71,11 +76,17 @@ categories:toggle_hidden:{slug}
 ```python
 def get_visible_for_type(self, telegram_user_id: int, tx_type: str) -> list[UserCategory]
 ```
-Returns non-hidden categories for the given type (or both). Used by:
-- `low_confidence_category_keyboard()` in runtime.py
-- `edit_categories_keyboard()` in runtime.py
-- `evening_checkin_keyboard()` in runtime.py
-- `category_grid_keyboard()` (catfix flow) in runtime.py
+Returns non-hidden categories for the given type (or both).
+
+**Filtering is applied in `runtime.py` call sites** — call `get_visible_for_type()` first, then pass the filtered list to the keyboard builder. Do not change keyboard builder signatures. Apply at these locations in `runtime.py`:
+- Before `low_confidence_category_keyboard()` call (low-confidence flow)
+- Before `edit_categories_keyboard()` call (edit transaction flow)
+- Before `evening_checkin_keyboard()` call (evening check-in scheduler)
+- Before `category_grid_keyboard()` call (catfix flow)
+
+#### 6. `toggle_hidden` edge case: unknown slug
+
+`ensure_seeded()` seeds all system categories for the user. If after seeding `get_by_slug()` still returns `None`, the slug is invalid — method returns `None`. The handler treats `None` as a silent no-op with a callback alert.
 
 ---
 
