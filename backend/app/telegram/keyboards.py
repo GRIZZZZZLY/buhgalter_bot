@@ -55,8 +55,21 @@ def done_keyboard(back_target: str | None = None) -> InlineKeyboardMarkup:
 
 
 def advisor_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard for QA/advisor responses: [📊 Сводка] [≡ Меню]."""
-    return InlineKeyboardMarkup([[_btn("📊 Сводка", "nav:stats"), _menu_btn()]])
+    """Keyboard for one-off QA responses: [🧠 Продолжить в советнике] [≡ Меню]."""
+    return InlineKeyboardMarkup([
+        [_btn("🧠 Продолжить в советнике", "nav:advisor")],
+        [_btn("📊 Сводка", "nav:stats"), _menu_btn()],
+    ])
+
+
+def advisor_session_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard after each advisor answer in dialog mode: [✕ Завершить]."""
+    return InlineKeyboardMarkup([[_btn("✕ Завершить", "nav:menu")]])
+
+
+def advisor_onboarding_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for advisor onboarding screen."""
+    return InlineKeyboardMarkup([[_back_btn(), _menu_btn()]])
 
 
 def cancel_keyboard(back_target: str) -> InlineKeyboardMarkup:
@@ -74,13 +87,14 @@ MENU_BTN_BUDGETS  = "💰 Бюджеты"
 MENU_BTN_SETTINGS = "⚙️ Настройки"
 MENU_BTN_HELP     = "ℹ️ Помощь"
 MENU_BTN_CATEGORIES = "🗂 Категории"
+MENU_BTN_ADVISOR = "🧠 Советник"
 
 
 def main_menu_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [_btn("📊 Сводка", "nav:stats")],
         [_btn(MENU_BTN_PLANNED, "nav:planned_input"), _btn(MENU_BTN_RECURRING, "nav:recurring_input")],
-        [_btn(MENU_BTN_BUDGETS, "nav:budgets"), _btn(MENU_BTN_CATEGORIES, "nav:categories")],
+        [_btn(MENU_BTN_BUDGETS, "nav:budgets"), _btn(MENU_BTN_ADVISOR, "nav:advisor")],
         [_btn(MENU_BTN_SETTINGS, "nav:settings"), _btn(MENU_BTN_HELP, "nav:help")],
     ])
 
