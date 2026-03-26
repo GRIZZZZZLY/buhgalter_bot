@@ -92,12 +92,12 @@ class TelegramTextFlow:
 
         # Guard: only run when user is NOT in a pending category resolution flow.
         # _store_get returns None when there is no active pending state.
-        if _store_get(telegram_user_id) is None:
+        pending_resolution = _store_get(telegram_user_id)
+        if pending_resolution is None:
             rejection = self._input_guard.check(normalized_text)
             if rejection:
                 return {"action": "offtopic", "message": rejection}
 
-        pending_resolution = _store_get(telegram_user_id)
         if pending_resolution is not None:
             resolved = self._handle_pending_category_resolution(telegram_user_id, normalized_text, pending_resolution)
             if resolved is not None:
