@@ -304,6 +304,8 @@ def test_low_confidence_text_calls_llm(db_session) -> None:
         answer="Не понял что это.",
     )
     service = TelegramBotService(db_session)
+    # Bypass InputGuard — this test is verifying LLM routing logic, not the guard.
+    # "что-то непонятное" would normally be rejected by the guard (no financial signals).
     with patch.object(service.flow._input_guard, "check", return_value=None), \
          patch.object(service.flow.llm_service, "process", return_value=fake_llm_result) as mock_llm:
         response = service.process_text_message(telegram_user_id=555, text="что-то непонятное")
