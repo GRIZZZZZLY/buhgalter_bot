@@ -138,11 +138,25 @@ def planned_confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def planned_done_keyboard() -> InlineKeyboardMarkup:
+    """After planned expense saved: add another or go to menu."""
+    return InlineKeyboardMarkup([
+        [_btn("📋 Ещё один", "nav:planned_input"), _menu_btn()],
+    ])
+
+
 def recurring_confirm_keyboard() -> InlineKeyboardMarkup:
     """Confirmation keyboard after LLM extraction of recurring transaction."""
     return InlineKeyboardMarkup([
         [_btn("✅ Сохранить", "recurring_input:confirm"),
          _btn("❌ Отмена", "recurring_input:cancel")],
+    ])
+
+
+def recurring_done_keyboard() -> InlineKeyboardMarkup:
+    """After recurring rule saved: add another or go to menu."""
+    return InlineKeyboardMarkup([
+        [_btn("🔄 Ещё один", "nav:recurring_input"), _menu_btn()],
     ])
 
 
@@ -434,9 +448,9 @@ def planned_expense_due_keyboard(planned_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             _btn("✅ Учесть", f"planned:confirm:{planned_id}"),
-            _btn("✏️ Изменить сумму и учесть", f"planned:edit_amount:{planned_id}"),
+            _btn("✏️ Другая сумма", f"planned:edit_amount:{planned_id}"),
         ],
-        [_btn("📅 Изменить дату", f"planned:edit_date:{planned_id}"), _btn("❌ Отмена", f"planned:cancel:{planned_id}")],
+        [_btn("📅 Новая дата", f"planned:edit_date:{planned_id}"), _btn("❌ Отмена", f"planned:cancel:{planned_id}")],
     ])
 
 
@@ -444,10 +458,10 @@ def planned_manage_keyboard(planned_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             _btn("✅ Учесть", f"planned:confirm:{planned_id}"),
-            _btn("✏️ Учесть с другой суммой", f"planned:edit_amount:{planned_id}"),
+            _btn("✏️ Другая сумма", f"planned:edit_amount:{planned_id}"),
         ],
         [
-            _btn("📅 Изменить дату", f"planned:edit_date:{planned_id}"),
+            _btn("📅 Новая дата", f"planned:edit_date:{planned_id}"),
             _btn("🗑 Удалить", f"planned:cancel:{planned_id}"),
         ],
     ])

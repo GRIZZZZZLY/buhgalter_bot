@@ -1449,10 +1449,11 @@ async def planned_input_callback_handler(
             planned_date=_date.fromisoformat(pending["planned_date"]),
         )
 
+    from app.telegram.keyboards import planned_done_keyboard
     try:
         await query.edit_message_text(
             f"✅ Запланировано: {item.title} — {float(item.amount):,.0f} ₽ на {item.planned_date}",
-            reply_markup=main_menu_inline_keyboard(),
+            reply_markup=planned_done_keyboard(),
         )
     except BadRequest:
         pass
@@ -1514,10 +1515,11 @@ async def recurring_input_callback_handler(
 
     sign = "+" if rt.transaction_type == "income" else "−"
     freq_label = _format_recurring_schedule(rt)
+    from app.telegram.keyboards import recurring_done_keyboard
     try:
         await query.edit_message_text(
             f"✅ Добавлено: {rt.title} {sign}{float(rt.amount):,.0f} ₽ — {freq_label}",
-            reply_markup=main_menu_inline_keyboard(),
+            reply_markup=recurring_done_keyboard(),
         )
     except BadRequest:
         pass
