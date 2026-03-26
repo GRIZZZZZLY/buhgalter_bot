@@ -41,6 +41,7 @@ def test_blacklist_rejected(text):
     "бюджет на месяц",
     "напиши расход на такси",            # "напиши" NOT in blacklist; whitelist "расход" saves it
     "расскажи сколько я потратил",       # NOT blacklisted; whitelist "потратил" saves it
+    "спортзал 1000",                     # "спорт" is substring of "спортзал" — must NOT be blacklisted
 ])
 def test_whitelist_passed(text):
     assert guard.check(text) is None

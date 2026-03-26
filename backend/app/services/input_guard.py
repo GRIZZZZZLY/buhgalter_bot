@@ -10,18 +10,22 @@ _REJECTION = "Я работаю только с финансами — расх�
 # NOTE: "расскажи" and "напиши" are intentionally NOT here — they may appear
 # in valid financial messages ("напиши расход на такси"). They are caught by
 # the default-reject path when no financial signals are present.
-_BLACKLIST: tuple[str, ...] = (
-    "анекдот", "шутк", "стих", "поэм", "песн",
-    "привет", "здравствуй", "добрый день", "добрый вечер",
-    "как дела", "как ты",
-    "погода", "новост", "политик", "спорт", "рецепт",
-    "помоги с",
-)
+# Word-boundary matching ensures "спорт" does not match "спортзал",
+# and "рецепт" does not match "рецептурный".
+_BLACKLIST_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\b" + re.escape(p) + r"\b") for p in (
+        "анекдот", "шутк", "стих", "поэм", "песн",
+        "привет", "здравствуй", "добрый день", "добрый вечер",
+        "как дела", "как ты",
+        "погода", "новост", "политик", "спорт", "рецепт",
+        "помоги с",
+    )
+]
 
 # Substrings that indicate a financial message. Any match → pass through.
 _FINANCIAL_KEYWORDS: tuple[str, ...] = (
     "потратил", "купил", "заплатил", "получил",
-    "доход", "расход", "зарплата", "зарплат",
+    "доход", "расход", "зарплат",
     "перевёл", "перевел",
     "стоит", "рублей", "копейк",
     "бюджет", "трат", "плат", "выплат",
@@ -50,7 +54,7 @@ class InputGuard:
             return _REJECTION
 
         # 1. Blacklist: explicit off-topic wins regardless of financial signals
-        if any(pattern in t for pattern in _BLACKLIST):
+        if any(p.search(t) for p in _BLACKLIST_PATTERNS):
             return _REJECTION
 
         # 2. Whitelist: digits, currency symbols, or financial keywords
