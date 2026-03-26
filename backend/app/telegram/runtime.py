@@ -475,6 +475,65 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
         return
 
 
+async def reset_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles reset:pick, reset:confirm:{scope}, reset:do:{scope}."""
+    from app.telegram.keyboards import reset_pick_keyboard, reset_confirm_keyboard
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    scope = parts[2] if len(parts) > 2 else ""
+    user_id = update.effective_user.id
+
+    if action == "pick":
+        await query.edit_message_text(
+            "🗑 *Сброс данных*\n\nЧто удалить?",
+            reply_markup=reset_pick_keyboard(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "confirm":
+        labels = {"all": "все транзакции и бюджеты", "expense": "все расходы", "income": "все доходы"}
+        label = labels.get(scope, scope)
+        await query.edit_message_text(
+            f"⚠️ Удалить *{label}*?\n\nЭто действие нельзя отменить.",
+            reply_markup=reset_confirm_keyboard(scope),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "do":
+        from app.services.transaction_service import TransactionService
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = TransactionService(db)
+            if scope == "all":
+                count = svc.delete_all_for_user(user_id)
+                # Reset budgets
+                from sqlalchemy import delete as sa_delete
+                from app.models.category_budget import CategoryBudget
+                db.execute(sa_delete(CategoryBudget).where(CategoryBudget.telegram_user_id == user_id))
+                user_repo = UserRepository(db)
+                u = user_repo.get_by_telegram_id(user_id)
+                if u:
+                    user_repo.update_settings(u, budget_amount=None)
+                db.commit()
+                msg = f"✅ Удалено {count} транзакций и все бюджеты."
+            else:
+                count = svc.delete_by_type(user_id, scope)
+                label = "расходов" if scope == "expense" else "доходов"
+                msg = f"✅ Удалено {count} {label}."
+        await query.edit_message_text(msg, reply_markup=done_keyboard(back_target="nav:settings"))
+        return
+
+
 def build_application() -> Application:
     configure_logging()
     settings = get_settings()
@@ -521,6 +580,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(categories_callback_handler, pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
+    application.add_handler(CallbackQueryHandler(reset_callback_handler,   pattern=r"^reset:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     return application

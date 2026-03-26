@@ -1,3 +1,4 @@
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.repositories.transaction_repository import TransactionRepository
 from app.schemas.parser import ParseResult
 from app.schemas.summary import CategoryTotal, SummaryMetrics
-from app.schemas.transaction import TransactionItem, TransactionUpdateRequest
+from app.schemas.transaction import TransactionCreateRequest, TransactionItem, TransactionUpdateRequest
 
 
 class TransactionService:
@@ -27,8 +28,17 @@ class TransactionService:
             "confidence": parsed.confidence,
         }
 
-    def create_from_parse(self, telegram_user_id: int, source: str, parsed: ParseResult) -> TransactionItem:
+    def create_from_parse(
+        self,
+        telegram_user_id: int,
+        source: str,
+        parsed: ParseResult,
+        override_date: date | None = None,
+    ) -> TransactionItem:
         payload = self.build_create_payload(telegram_user_id, source, parsed)
+        if override_date is not None:
+            # Store as end-of-day UTC so it falls within the correct calendar day
+            payload["created_at"] = datetime.combine(override_date, time(23, 59, 59), tzinfo=timezone.utc)
         transaction = self.repository.create(payload)
         return self._to_item(transaction)
 
@@ -65,6 +75,25 @@ class TransactionService:
             ],
         )
 
+    def create_manual(
+        self,
+        telegram_user_id: int,
+        payload: TransactionCreateRequest,
+    ) -> TransactionItem:
+        """Create a transaction entered manually via WebApp (no parser involved)."""
+        data = {
+            "telegram_user_id": telegram_user_id,
+            "type": payload.type,
+            "amount": Decimal(payload.amount),
+            "category": payload.category,
+            "description": payload.description,
+            "source": "webapp",
+            "raw_input": f"{payload.type} {payload.amount} {payload.category}",
+            "confidence": 1.0,
+        }
+        transaction = self.repository.create(data)
+        return self._to_item(transaction)
+
     def update_transaction(
         self,
         telegram_user_id: int,
@@ -77,11 +106,17 @@ class TransactionService:
             return None
         return self._to_item(transaction)
 
+    def update_category(self, telegram_user_id: int, transaction_id: str, new_category: str):
+        return self.repository.update(telegram_user_id, UUID(transaction_id), {"category": new_category})
+
     def delete_transaction(self, telegram_user_id: int, transaction_id: UUID) -> bool:
         return self.repository.delete(telegram_user_id, transaction_id)
 
     def delete_all_for_user(self, telegram_user_id: int) -> int:
         return self.repository.delete_all_for_user(telegram_user_id)
+
+    def delete_by_type(self, telegram_user_id: int, tx_type: str) -> int:
+        return self.repository.delete_by_type(telegram_user_id, tx_type)
 
     @staticmethod
     def _format_decimal(value: Decimal) -> str:

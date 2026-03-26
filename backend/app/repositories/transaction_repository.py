@@ -124,6 +124,17 @@ class TransactionRepository:
         self.db.commit()
         return int(result.rowcount or 0)
 
+    def delete_by_type(self, telegram_user_id: int, tx_type: str) -> int:
+        from app.models.transaction import TransactionType
+        t = TransactionType(tx_type)
+        stmt = delete(Transaction).where(
+            Transaction.telegram_user_id == telegram_user_id,
+            Transaction.type == t,
+        )
+        result = self.db.execute(stmt)
+        self.db.commit()
+        return int(result.rowcount or 0)
+
     def sum_expenses_by_category(
         self, telegram_user_id: int, start: datetime, end: datetime
     ) -> dict[str, Decimal]:

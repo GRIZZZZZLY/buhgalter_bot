@@ -396,7 +396,26 @@ def settings_nav_inline_keyboard() -> InlineKeyboardMarkup:
         [_btn("📅 Начало периода", "settings:budget_day")],
         [_btn("🔔 Напоминания", "settings:reminders")],
         [_btn("🌍 Часовой пояс", "settings:timezone")],
+        [_btn("🗑 Сбросить данные", "reset:pick")],
         [_back_btn()],
+    ])
+
+
+def reset_pick_keyboard() -> InlineKeyboardMarkup:
+    """Choose what to reset."""
+    return InlineKeyboardMarkup([
+        [_btn("🗑 Всё", "reset:confirm:all"),
+         _btn("↘ Расходы", "reset:confirm:expense"),
+         _btn("↗ Доходы", "reset:confirm:income")],
+        [_back_btn("nav:settings")],
+    ])
+
+
+def reset_confirm_keyboard(scope: str) -> InlineKeyboardMarkup:
+    """Confirm before destructive reset."""
+    return InlineKeyboardMarkup([
+        [_btn("✅ Да, удалить", f"reset:do:{scope}"),
+         _btn("❌ Отмена", "nav:settings")],
     ])
 
 
