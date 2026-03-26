@@ -485,6 +485,13 @@ def evening_checkin_keyboard(top_categories: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def evening_checkin_done_keyboard() -> InlineKeyboardMarkup:
+    """After check-in save: add another expense or finish."""
+    return InlineKeyboardMarkup([
+        [_btn("➕ Ещё расход", "checkin:more"), _menu_btn()],
+    ])
+
+
 def evening_checkin_amount_keyboard(category: str) -> InlineKeyboardMarkup:
     """Quick amount buttons after category is chosen."""
     amounts = ["100", "200", "500", "1000", "2000"]
@@ -554,6 +561,14 @@ def edit_item_keyboard(transaction_id: str) -> InlineKeyboardMarkup:
         [_btn("↕️ Тип", f"edit:type:{transaction_id}")],
         [_btn("🗑 Удалить", f"edit:del:{transaction_id}")],
         [_back_btn("edit:select")],
+    ])
+
+
+def edit_delete_confirm_keyboard(transaction_id: str) -> InlineKeyboardMarkup:
+    """Confirm before deleting a transaction from edit screen."""
+    return InlineKeyboardMarkup([
+        [_btn("🗑 Да, удалить", f"edit:del_confirm:{transaction_id}"),
+         _btn("❌ Отмена", f"edit:item:{transaction_id}")],
     ])
 
 

@@ -719,6 +719,14 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if action == "del":
+        from app.telegram.keyboards import edit_delete_confirm_keyboard
+        await query.edit_message_text(
+            "🗑 Удалить эту запись?",
+            reply_markup=edit_delete_confirm_keyboard(tx_id),
+        )
+        return
+
+    if action == "del_confirm":
         with SessionLocal() as db:
             from uuid import UUID
             from app.services.transaction_service import TransactionService
@@ -1192,6 +1200,27 @@ async def checkin_callback_handler(update: Update, context: ContextTypes.DEFAULT
         await query.edit_message_text("👍 Хорошо, пустой день.", reply_markup=done_keyboard())
         return
 
+    if action == "more":
+        from app.services.reminder_service import ReminderService
+        from app.services.category_service import CategoryService
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            user_repo = UserRepository(db)
+            user = user_repo.get_by_telegram_id(update.effective_user.id)
+            if user is None:
+                await query.edit_message_text("❌ Ошибка.", reply_markup=done_keyboard())
+                return
+            _, top_categories = ReminderService(db).build_evening_checkin(user)
+            cat_svc = CategoryService(db)
+            cat_svc.ensure_seeded(update.effective_user.id)
+            visible_slugs = {c.slug for c in cat_svc.get_visible_for_type(update.effective_user.id, "expense")}
+            filtered = [c for c in top_categories if c in visible_slugs]
+        await query.edit_message_text(
+            "🌙 Что ещё потратил?",
+            reply_markup=evening_checkin_keyboard(filtered or top_categories),
+        )
+        return
+
     if action == "cat" and len(parts) > 2:
         cat_slug = parts[2]
         cat_label = formatter.category_label(cat_slug)
@@ -1231,13 +1260,10 @@ async def checkin_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
         balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
         msg = formatter.format_saved("расход", str(item.amount), item.category, balance)
-        tx_id = str(item.id)
+        from app.telegram.keyboards import evening_checkin_done_keyboard
         await query.edit_message_text(
             msg, parse_mode="HTML",
-            reply_markup=saved_actions_keyboard(tx_id),
-        )
-        asyncio.create_task(
-            _auto_remove_keyboard(context.bot, query.message.chat_id, query.message.message_id)
+            reply_markup=evening_checkin_done_keyboard(),
         )
         return
 
