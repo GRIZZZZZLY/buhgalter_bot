@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.repositories.user_category_mapping_repository import UserCategoryMappingRepository
 from app.schemas.parser import ParseResult
+from app.services.financial_qa_service import FinancialQAService
+from app.services.input_guard import InputGuard
 from app.services.llm_service import LLMService, LLMUnavailableError
 from app.services.parser_service import ParserService
 from app.services.transaction_service import TransactionService
@@ -83,9 +85,17 @@ class TelegramTextFlow:
         self.voice_flow_service = VoiceFlowService(db, parser_service=self.parser_service)
         self.mapping_repo = UserCategoryMappingRepository(db)
         self.llm_service = LLMService(db)
+        self._input_guard = InputGuard()
 
     def handle_text(self, telegram_user_id: int, text: str) -> dict[str, object]:
         normalized_text = self._normalize_incoming_text(text)
+
+        # Guard: only run when user is NOT in a pending category resolution flow.
+        # _store_get returns None when there is no active pending state.
+        if _store_get(telegram_user_id) is None:
+            rejection = self._input_guard.check(normalized_text)
+            if rejection:
+                return {"action": "offtopic", "message": rejection}
 
         pending_resolution = _store_get(telegram_user_id)
         if pending_resolution is not None:
@@ -100,6 +110,29 @@ class TelegramTextFlow:
                 payload["voice_log_id"] = str(voice_edit.voice_log_id)
             return payload
 
+        # Question shortcut: route financial questions directly to QA service
+        if self._looks_like_question(normalized_text):
+            answer = FinancialQAService(self.db).answer(normalized_text, telegram_user_id)
+            return {"action": "advisor", "message": answer}
+
+        # Fast path: skip LLM when ParserService is confident
+        parsed = self.parser_service.parse(normalized_text)
+        if parsed.confidence_label == "high" and parsed.amount is not None:
+            tx = self.transaction_service.create_from_parse(
+                telegram_user_id=telegram_user_id,
+                source="text",
+                parsed=parsed,
+                override_date=None,
+            )
+            summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
+            operation_label = "доход" if tx.type == "income" else "расход"
+            return {
+                "action": "saved",
+                "message": formatter.format_saved(operation_label, tx.amount, tx.category, self._signed(summary.balance), None),
+                "saved_category": tx.category,
+                "saved_transaction_id": str(tx.id),
+            }
+
         # LLM processing
         try:
             llm_result = self.llm_service.process(normalized_text, telegram_user_id)
@@ -107,7 +140,8 @@ class TelegramTextFlow:
             return {"action": "fallback", "message": "Сервис временно недоступен, попробуй позже."}
 
         if llm_result.intent == "advisor":
-            return {"action": "advisor", "message": llm_result.answer}
+            answer = FinancialQAService(self.db).answer(normalized_text, telegram_user_id)
+            return {"action": "advisor", "message": answer}
 
         # Save transaction(s)
         saved_items: list[dict[str, str]] = []
@@ -353,6 +387,17 @@ class TelegramTextFlow:
                 continue
             lines.append(stripped)
         return " ".join(lines).strip()
+
+    @staticmethod
+    def _looks_like_question(text: str) -> bool:
+        t = text.lower().strip()
+        if t.endswith("?"):
+            return True
+        question_starts = (
+            "сколько", "почему", "когда", "как ", "можно ", "стоит ",
+            "могу ", "могла ", "хватит ", "достаточно ", "покажи ", "расскажи ",
+        )
+        return any(t.startswith(w) for w in question_starts)
 
     @staticmethod
     def _signed(value: str) -> str:
