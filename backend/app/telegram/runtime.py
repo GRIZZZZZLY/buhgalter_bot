@@ -238,13 +238,16 @@ async def improve_categories_command(update: Update, context: ContextTypes.DEFAU
         await update.effective_message.reply_text("Предложений нет.", reply_markup=done_keyboard())
         return
 
-    for item in results:
+    from app.telegram.keyboards import grouped_suggestion_keyboard
+    lines = []
+    for i, item in enumerate(results, 1):
         _sugg_set(item["key"], item["suggestion"])
-        await update.effective_message.reply_text(
-            item["text"],
-            parse_mode="HTML",
-            reply_markup=suggestion_keyboard(item["key"]),
-        )
+        lines.append(f"<b>{i}.</b> {item['text']}")
+    await update.effective_message.reply_text(
+        "\n\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=grouped_suggestion_keyboard(results),
+    )
 
 
 async def sugg_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -262,18 +265,25 @@ async def sugg_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     action = data.rsplit("_", 1)[1] if "_" in data else ""
 
     suggestion = _sugg_pop(key)
-    if suggestion is None:
-        await query.edit_message_reply_markup(reply_markup=None)
-        return
+    if suggestion is not None and action == "yes":
+        with SessionLocal() as db:
+            svc = TelegramBotService(db)
+            svc.apply_suggestion(suggestion)
 
-    if action == "no":
-        await query.edit_message_reply_markup(reply_markup=None)
-        return
+    # Rebuild keyboard without the processed row
+    remaining_rows = []
+    if query.message and query.message.reply_markup:
+        for row in query.message.reply_markup.inline_keyboard:
+            row_keys = {btn.callback_data.rsplit("_", 1)[0] for btn in row if btn.callback_data}
+            if key not in row_keys:
+                remaining_rows.append(row)
 
-    with SessionLocal() as db:
-        svc = TelegramBotService(db)
-        svc.apply_suggestion(suggestion)
-    await query.edit_message_reply_markup(reply_markup=None)
+    if remaining_rows:
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup(remaining_rows)
+        )
+    else:
+        await query.edit_message_reply_markup(reply_markup=None)
 
 
 async def categories_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -297,9 +307,6 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
         category_reassign_keyboard,
         category_delete_confirm_keyboard,
     )
-
-    if action == "noop":
-        return
 
     if action == "edit":
         slug = param
@@ -1586,13 +1593,10 @@ async def budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.effective_message.reply_text(f"✅ Бюджет «{cat_label}»: {amount:,.0f} ₽/мес", reply_markup=done_keyboard(back_target="nav:budgets"))
 
 
-async def _check_and_send_budget_alert(
-    update: Update, db, telegram_user_id: int, category: str
-) -> None:
+def _get_budget_alert(db, telegram_user_id: int, category: str) -> str | None:
+    """Return budget alert text or None (no longer sends a separate message)."""
     analytics = AnalyticsService(db)
-    alert = analytics.check_budget_alert(telegram_user_id, category)
-    if alert:
-        await update.effective_message.reply_text(alert, reply_markup=done_keyboard())
+    return analytics.check_budget_alert(telegram_user_id, category)
 
 
 # ---------------------------------------------------------------------------
@@ -2249,6 +2253,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         service = TelegramBotService(db)
         response = service.process_text_message(update.effective_user.id, text)
 
+        budget_alert = None
         if response.get("action") == "saved" and user:
             from datetime import datetime, timezone as tz_mod
             from zoneinfo import ZoneInfo
@@ -2262,7 +2267,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
             saved_category = response.get("saved_category")
             if saved_category:
-                await _check_and_send_budget_alert(update, db, user.telegram_user_id, str(saved_category))
+                budget_alert = _get_budget_alert(db, user.telegram_user_id, str(saved_category))
 
     # Route response to correct handler
     action = response.get("action", "")
@@ -2295,9 +2300,12 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if action == "saved" and response.get("saved_transaction_id"):
         tx_id_str = response["saved_transaction_id"]
+        saved_msg = response["message"]
+        if budget_alert:
+            saved_msg += f"\n{budget_alert}"
         await _send_saved_with_undo(
             update, context,
-            response["message"],
+            saved_msg,
             [tx_id_str],
             correction_tx_id=tx_id_str,
         )

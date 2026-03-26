@@ -660,3 +660,14 @@ def suggestion_keyboard(suggestion_key: str) -> InlineKeyboardMarkup:
     ]])
 
 
+def grouped_suggestion_keyboard(items: list[dict]) -> InlineKeyboardMarkup:
+    """One keyboard with numbered ✅/❌ per suggestion."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, item in enumerate(items, 1):
+        rows.append([
+            InlineKeyboardButton(f"✅ {i}", callback_data=f"{item['key']}_yes"),
+            InlineKeyboardButton(f"❌ {i}", callback_data=f"{item['key']}_no"),
+        ])
+    return InlineKeyboardMarkup(rows)
+
+
