@@ -24,7 +24,7 @@ def upgrade() -> None:
         sa.Column("name_ru", sa.String(length=100), nullable=False),
         sa.Column("emoji", sa.String(length=10), nullable=False),
         sa.Column("type", sa.String(length=10), nullable=False),
-        sa.Column("is_custom", sa.Boolean(), nullable=False, server_default="0"),
+        sa.Column("is_custom", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
             "created_at",
