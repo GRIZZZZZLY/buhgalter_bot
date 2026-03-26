@@ -131,25 +131,34 @@ class NavService:
         return NavScreen(text=text, keyboard=budgets_inline_keyboard())
 
     def categories_screen(self, telegram_user_id: int) -> NavScreen:
+        """Type selector: choose expense or income."""
+        CategoryService(self.db).ensure_seeded(telegram_user_id)
+        from app.telegram.keyboards import categories_type_keyboard
+        return NavScreen(text="🗂 *Категории*\n\nВыбери раздел:", keyboard=categories_type_keyboard())
+
+    def categories_list_screen(
+        self, telegram_user_id: int, cat_type: str, page: int
+    ) -> NavScreen:
+        """Paginated category list for expense or income."""
+        from app.telegram.keyboards import categories_list_keyboard, CATEGORIES_PAGE_SIZE
         svc = CategoryService(self.db)
         svc.ensure_seeded(telegram_user_id)
         groups = svc.list_categories(telegram_user_id)
 
-        lines = ["🗂 *Категории*\n"]
-        type_labels = {"expense": "Расходы", "income": "Доходы", "both": "Прочее"}
-        for group_type in ("expense", "income", "both"):
-            cats = groups.get(group_type, [])
-            if not cats:
-                continue
-            lines.append(f"*{type_labels[group_type]}*")
-            for cat in cats:
-                custom_mark = " _(кастомная)_" if cat.is_custom else ""
-                lines.append(f"{cat.emoji} {cat.name_ru}{custom_mark}")
-            lines.append("")
+        # 'both' categories appear in both sections
+        cats = groups.get(cat_type, []) + groups.get("both", [])
+        total = len(cats)
+        start = page * CATEGORIES_PAGE_SIZE
+        page_cats = cats[start: start + CATEGORIES_PAGE_SIZE]
 
-        text = "\n".join(lines).strip()
-        from app.telegram.keyboards import categories_nav_keyboard
-        return NavScreen(text=text, keyboard=categories_nav_keyboard(groups))
+        type_label = "💸 Расходы" if cat_type == "expense" else "💰 Доходы"
+        total_pages = max(1, (total + CATEGORIES_PAGE_SIZE - 1) // CATEGORIES_PAGE_SIZE)
+        text = f"{type_label} _(стр. {page + 1}/{total_pages})_"
+
+        return NavScreen(
+            text=text,
+            keyboard=categories_list_keyboard(page_cats, cat_type, page, total),
+        )
 
     # ------------------------------------------------------------------
     # Settings

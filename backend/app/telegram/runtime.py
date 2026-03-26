@@ -298,7 +298,16 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
     parts = query.data.split(":")
     action = parts[1] if len(parts) > 1 else ""
     param = parts[2] if len(parts) > 2 else ""
+    # Optional type+page appended by categories_list_keyboard: categories:edit:{slug}:{type}:{page}
+    _ctx_type = parts[3] if len(parts) > 3 else ""
+    _ctx_page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
     user_id = update.effective_user.id
+
+    def _list_back() -> str:
+        """Back target to the category list (or type selector if no context)."""
+        t = context.user_data.get("categories_ctx", {}).get("type", _ctx_type)
+        p = context.user_data.get("categories_ctx", {}).get("page", _ctx_page)
+        return f"nav:categories:{t}:{p}" if t else "nav:categories"
 
     from app.services.category_service import CategoryService
     from app.telegram.keyboards import (
@@ -310,18 +319,20 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
 
     if action == "edit":
         slug = param
+        if _ctx_type:
+            context.user_data["categories_ctx"] = {"type": _ctx_type, "page": _ctx_page}
         with SessionLocal() as db:
             _ensure_user(db, update)
             svc = CategoryService(db)
             svc.ensure_seeded(user_id)
             cat = svc._repo.get_by_slug(user_id, slug)
         if cat is None:
-            await query.edit_message_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target="nav:categories"))
+            await query.edit_message_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target=_list_back()))
             return
         text = f"✏️ *{cat.emoji} {cat.name_ru}*\n\nЧто изменить?"
         await query.edit_message_text(
             text,
-            reply_markup=category_edit_keyboard(slug, cat.is_custom, cat.is_hidden),
+            reply_markup=category_edit_keyboard(slug, cat.is_custom, cat.is_hidden, back_target=_list_back()),
             parse_mode="Markdown",
         )
         return
@@ -365,7 +376,7 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
         name_ru = pending.get("name_ru", "")
         emoji = pending.get("emoji", "")
         if not name_ru or not emoji:
-            await query.edit_message_text("❌ Что-то пошло не так. Попробуй снова.", reply_markup=done_keyboard(back_target="nav:categories"))
+            await query.edit_message_text("❌ Что-то пошло не так. Попробуй снова.", reply_markup=done_keyboard(back_target=_list_back()))
             return
         context.user_data.pop("pending_category_add", None)
         context.user_data.pop("awaiting_category_add", None)
@@ -376,7 +387,7 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             try:
                 cat = svc.add_custom(user_id, name_ru, emoji, cat_type)
             except ValueError as e:
-                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target="nav:categories"))
+                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target=_list_back()))
                 return
         await query.edit_message_text(f"✅ Категория «{cat.emoji} {cat.name_ru}» создана!", reply_markup=done_keyboard())
         return
@@ -389,7 +400,7 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             svc.ensure_seeded(user_id)
             cat = svc._repo.get_by_slug(user_id, slug)
             if cat is None or not cat.is_custom:
-                await query.edit_message_text("❌ Нельзя удалить системную категорию.", reply_markup=done_keyboard(back_target="nav:categories"))
+                await query.edit_message_text("❌ Нельзя удалить системную категорию.", reply_markup=done_keyboard(back_target=_list_back()))
                 return
             count = svc.count_transactions(user_id, slug)
             if count > 0:
@@ -423,14 +434,14 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             try:
                 svc.delete_custom(user_id, slug, reassign_to_slug="other")
             except ValueError as e:
-                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target="nav:categories"))
+                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target=_list_back()))
                 return
         await query.edit_message_text("✅ Категория удалена.", reply_markup=done_keyboard())
         return
 
     if action == "reassign":
         if "__" not in param:
-            await query.edit_message_text("❌ Неверный формат.", reply_markup=done_keyboard(back_target="nav:categories"))
+            await query.edit_message_text("❌ Неверный формат.", reply_markup=done_keyboard(back_target=_list_back()))
             return
         from_slug, to_slug = param.split("__", 1)
         with SessionLocal() as db:
@@ -440,7 +451,7 @@ async def categories_callback_handler(update: Update, context: ContextTypes.DEFA
             try:
                 svc.delete_custom(user_id, from_slug, to_slug)
             except ValueError as e:
-                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target="nav:categories"))
+                await query.edit_message_text(f"❌ {e}", reply_markup=done_keyboard(back_target=_list_back()))
                 return
         await query.edit_message_text("✅ Транзакции перенесены, категория удалена.", reply_markup=done_keyboard())
         return
@@ -1386,7 +1397,11 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             elif section == "settings":
                 screen = nav.settings_screen(user_id)
             elif section == "categories":
-                screen = nav.categories_screen(user_id)
+                if sub in ("expense", "income"):
+                    page = int(extra) if extra.isdigit() else 0
+                    screen = nav.categories_list_screen(user_id, sub, page)
+                else:
+                    screen = nav.categories_screen(user_id)
             elif section == "advisor":
                 context.user_data["mode"] = "advisor"
                 context.user_data["advisor_history"] = []
@@ -2137,7 +2152,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 reply_markup=done_keyboard(),
             )
         else:
-            await update.effective_message.reply_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target="nav:categories"))
+            _ctx = (context.user_data or {}).get("categories_ctx", {})
+            _bt = f"nav:categories:{_ctx['type']}:{_ctx['page']}" if _ctx.get("type") else "nav:categories"
+            await update.effective_message.reply_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target=_bt))
         return
 
     # --- Category: change emoji ---
@@ -2152,13 +2169,17 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             try:
                 cat = svc.change_emoji(update.effective_user.id, awaiting_emoji, text.strip())
             except ValueError as e:
-                await update.effective_message.reply_text(f"❌ {e} Попробуй ещё раз.", reply_markup=done_keyboard(back_target="nav:categories"))
+                _ctx = (context.user_data or {}).get("categories_ctx", {})
+                _bt = f"nav:categories:{_ctx['type']}:{_ctx['page']}" if _ctx.get("type") else "nav:categories"
+                await update.effective_message.reply_text(f"❌ {e} Попробуй ещё раз.", reply_markup=done_keyboard(back_target=_bt))
                 context.user_data["awaiting_category_emoji"] = awaiting_emoji
                 return
         if cat:
             await update.effective_message.reply_text(f"✅ Emoji обновлён: {cat.emoji} {cat.name_ru}", reply_markup=done_keyboard())
         else:
-            await update.effective_message.reply_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target="nav:categories"))
+            _ctx = (context.user_data or {}).get("categories_ctx", {})
+            _bt = f"nav:categories:{_ctx['type']}:{_ctx['page']}" if _ctx.get("type") else "nav:categories"
+            await update.effective_message.reply_text("❌ Категория не найдена.", reply_markup=done_keyboard(back_target=_bt))
         return
 
     # --- Category: add (name or emoji step) ---

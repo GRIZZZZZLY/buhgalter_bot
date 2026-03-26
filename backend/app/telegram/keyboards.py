@@ -176,7 +176,69 @@ def categories_nav_keyboard(categories_by_type: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def category_edit_keyboard(slug: str, is_custom: bool, is_hidden: bool) -> InlineKeyboardMarkup:
+# ---------------------------------------------------------------------------
+# Categories v2 — type selector + paginated list
+# ---------------------------------------------------------------------------
+
+CATEGORIES_PAGE_SIZE = 8
+
+
+def categories_type_keyboard() -> InlineKeyboardMarkup:
+    """First categories screen: choose expense or income."""
+    return InlineKeyboardMarkup([
+        [_btn("💸 Расходы", "nav:categories:expense:0"),
+         _btn("💰 Доходы", "nav:categories:income:0")],
+        [_btn("➕ Добавить", "categories:add"), _back_btn()],
+    ])
+
+
+def categories_list_keyboard(
+    cats: list,
+    cat_type: str,
+    page: int,
+    total: int,
+) -> InlineKeyboardMarkup:
+    """Paginated list of categories for a given type.
+
+    cats: slice of categories for this page (already sliced).
+    cat_type: 'expense' or 'income'.
+    page: current 0-based page index.
+    total: total number of categories (for pagination math).
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+
+    # Category buttons — 2 per row
+    row: list[InlineKeyboardButton] = []
+    for cat in cats:
+        row.append(_btn(
+            f"{cat.emoji} {cat.name_ru}",
+            f"categories:edit:{cat.slug}:{cat_type}:{page}",
+        ))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+
+    # Pagination row
+    total_pages = max(1, (total + CATEGORIES_PAGE_SIZE - 1) // CATEGORIES_PAGE_SIZE)
+    if total_pages > 1:
+        nav_row: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav_row.append(_btn("← Пред", f"nav:categories:{cat_type}:{page - 1}"))
+        if page < total_pages - 1:
+            nav_row.append(_btn("→ След", f"nav:categories:{cat_type}:{page + 1}"))
+        if nav_row:
+            rows.append(nav_row)
+
+    rows.append([_btn("➕ Добавить", "categories:add"),
+                 _back_btn("nav:categories")])
+    return InlineKeyboardMarkup(rows)
+
+
+def category_edit_keyboard(
+    slug: str, is_custom: bool, is_hidden: bool, back_target: str = "nav:categories"
+) -> InlineKeyboardMarkup:
     hide_label = "👁 Показать" if is_hidden else "🙈 Скрыть"
     rows = [
         [_btn("✏️ Изменить название", f"categories:rename:{slug}")],
@@ -185,7 +247,7 @@ def category_edit_keyboard(slug: str, is_custom: bool, is_hidden: bool) -> Inlin
     ]
     if is_custom:
         rows.append([_btn("🗑 Удалить", f"categories:delete:{slug}")])
-    rows.append([_back_btn("nav:categories")])
+    rows.append([_back_btn(back_target)])
     return InlineKeyboardMarkup(rows)
 
 
