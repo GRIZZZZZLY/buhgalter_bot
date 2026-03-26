@@ -2734,11 +2734,16 @@ async def _handle_advisor_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     history: list[dict] = context.user_data.get("advisor_history", [])
 
-    await update.effective_message.reply_text("🤔 Анализирую…")
+    placeholder = await update.effective_message.reply_text("🤔 Анализирую…")
 
     with SessionLocal() as db:
         _ensure_user(db, update)
         answer = FinancialQAService(db).answer(question, update.effective_user.id, history=history)
+
+    try:
+        await placeholder.delete()
+    except Exception:
+        pass
 
     # Update history (cap at 5 pairs = 10 messages)
     history = list(history)  # copy
