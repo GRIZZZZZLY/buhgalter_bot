@@ -14,7 +14,7 @@ router = APIRouter()
 def get_summary(
     period: str = Query(default="month", pattern="^(today|week|month|all)$"),
     telegram_user_id: Annotated[int, Depends(get_telegram_user_id)] = 0,
-    db: Annotated[Session, Depends(get_db)] = None,
+    db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> SummaryResponse:
     service = TransactionService(db)
     summary = service.get_summary(telegram_user_id=telegram_user_id, period=period)

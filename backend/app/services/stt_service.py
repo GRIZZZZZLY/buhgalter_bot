@@ -1,11 +1,39 @@
-from pathlib import Path
-import json
+import logging
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
+import json
 
 from app.core.settings import get_settings
 from app.schemas.voice import VoiceTranscriptionResult
+
+logger = logging.getLogger(__name__)
+
+# Subprocess timeouts (seconds)
+_FFMPEG_TIMEOUT = 60
+_WHISPER_CPP_TIMEOUT = 120
+
+# ---------------------------------------------------------------------------
+# Module-level WhisperModel cache: model_key → WhisperModel instance
+# Loaded once on first use, reused for all subsequent transcriptions.
+# ---------------------------------------------------------------------------
+_whisper_model_cache: dict[str, Any] = {}
+
+
+def _get_whisper_model(model_name: str, device: str, compute_type: str) -> Any:
+    """Return a cached WhisperModel, loading it on first call."""
+    from faster_whisper import WhisperModel  # type: ignore
+
+    key = f"{model_name}:{device}:{compute_type}"
+    if key not in _whisper_model_cache:
+        logger.info(
+            "loading WhisperModel: model=%s device=%s compute_type=%s",
+            model_name, device, compute_type,
+        )
+        _whisper_model_cache[key] = WhisperModel(model_name, device=device, compute_type=compute_type)
+        logger.info("WhisperModel loaded and cached: key=%s", key)
+    return _whisper_model_cache[key]
 
 
 class STTService:
@@ -29,15 +57,21 @@ class STTService:
         command = [
             self.ffmpeg_bin,
             "-y",
-            "-i",
-            input_path,
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
+            "-i", input_path,
+            "-ar", "16000",
+            "-ac", "1",
             output_path,
         ]
-        completed = subprocess.run(command, capture_output=True, text=True)
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=_FFMPEG_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("ffmpeg timed out after %ss: input=%s", _FFMPEG_TIMEOUT, input_path)
+            raise RuntimeError(f"ffmpeg timed out after {_FFMPEG_TIMEOUT}s")
         if completed.returncode != 0:
             raise RuntimeError(completed.stderr.strip() or "ffmpeg conversion failed")
         return output_path
@@ -78,8 +112,12 @@ class STTService:
 
     def _transcribe_faster_whisper(self, wav_path: str) -> VoiceTranscriptionResult:
         try:
-            from faster_whisper import WhisperModel  # type: ignore
-        except Exception as exc:
+            model = _get_whisper_model(
+                self.whisper_model,
+                self.whisper_device,
+                self.whisper_compute_type,
+            )
+        except ImportError as exc:
             stub_result = self._transcribe_stub(wav_path)
             if stub_result.text:
                 return VoiceTranscriptionResult(
@@ -98,11 +136,6 @@ class STTService:
             )
 
         try:
-            model = WhisperModel(
-                self.whisper_model,
-                device=self.whisper_device,
-                compute_type=self.whisper_compute_type,
-            )
             segments, info = model.transcribe(
                 wav_path,
                 language="ru",
@@ -133,6 +166,7 @@ class STTService:
                 failure_reason=None if text and confidence >= self.settings.stt_min_confidence else "low stt confidence",
             )
         except Exception as exc:
+            logger.exception("faster-whisper runtime error: wav=%s", wav_path)
             stub_result = self._transcribe_stub(wav_path)
             if stub_result.text:
                 return VoiceTranscriptionResult(
@@ -171,17 +205,28 @@ class STTService:
         output_json = str(Path(wav_path).with_suffix(".json"))
         command = [
             self.whisper_cpp_bin,
-            "-m",
-            self.whisper_cpp_model_path,
-            "-f",
-            wav_path,
-            "-l",
-            "ru",
+            "-m", self.whisper_cpp_model_path,
+            "-f", wav_path,
+            "-l", "ru",
             "-oj",
-            "-of",
-            str(Path(wav_path).with_suffix("")),
+            "-of", str(Path(wav_path).with_suffix("")),
         ]
-        completed = subprocess.run(command, capture_output=True, text=True)
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=_WHISPER_CPP_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("whisper-cpp timed out after %ss: wav=%s", _WHISPER_CPP_TIMEOUT, wav_path)
+            return VoiceTranscriptionResult(
+                text=None,
+                confidence=0.0,
+                provider="whisper-cpp",
+                needs_fallback=True,
+                failure_reason=f"whisper.cpp timed out after {_WHISPER_CPP_TIMEOUT}s",
+            )
         if completed.returncode != 0:
             return VoiceTranscriptionResult(
                 text=None,

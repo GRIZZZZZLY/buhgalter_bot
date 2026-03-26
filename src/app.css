@@ -1,0 +1,605 @@
+@import 'tailwindcss';
+
+/* ═══════════════════════════════════════════════════════════════════════
+   КАЗНАЧЕЙ — Design System
+   Hybrid: Telegram-native base + Spectral display + gold accent
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* ── Telegram theme tokens ──────────────────────────────────────────── */
+  --color-tg-bg: var(--tg-theme-bg-color, #f5f0e8);
+  --color-tg-text: var(--tg-theme-text-color, #1a1208);
+  --color-tg-hint: var(--tg-theme-hint-color, #8a7a6a);
+  --color-tg-link: var(--tg-theme-link-color, #2f62b8);
+  --color-tg-button: var(--tg-theme-button-color, #2f62b8);
+  --color-tg-button-text: var(--tg-theme-button-text-color, #ffffff);
+  --color-tg-secondary-bg: var(--tg-theme-secondary-bg-color, #ede8df);
+  --color-tg-section-bg: var(--tg-theme-section-bg-color, #faf7f2);
+  --color-tg-destructive: var(--tg-theme-destructive-text-color, #c0392b);
+
+  /* ── Finance semantic ───────────────────────────────────────────────── */
+  --color-income: #2e7d52;
+  --color-expense: #c0392b;
+
+  /* ── Казначей accent palette ────────────────────────────────────────── */
+  --color-gold: #b8860b;
+  --color-gold-bright: #d4a017;
+  --color-gold-light: rgba(184, 134, 11, 0.1);
+  --color-gold-muted: rgba(184, 134, 11, 0.3);
+
+  /* ── Typography ─────────────────────────────────────────────────────── */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Spectral', Georgia, 'Times New Roman', serif;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BASE
+   ═══════════════════════════════════════════════════════════════════════ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-tg-text);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+
+  /* Atmospheric parchment background — the key visual signature */
+  background-color: #ede8df;
+  background-image:
+    radial-gradient(ellipse at 15% 0%, rgba(184, 134, 11, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 85% 5%, rgba(47, 98, 184, 0.06) 0%, transparent 40%),
+    radial-gradient(ellipse at 50% 100%, rgba(184, 134, 11, 0.05) 0%, transparent 40%);
+}
+
+/* Subtle paper texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TYPOGRAPHY UTILITIES
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* Financial amounts — Spectral with tight tracking */
+.amount {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+/* Section kicker — gold uppercase label */
+.section-kicker {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-gold);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LAYOUT
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.page-content {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CARDS — Surface system
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Base card — warm white with subtle shadow */
+.card {
+  background: #faf7f2;
+  border-radius: 20px;
+  border: 1px solid rgba(184, 134, 11, 0.1);
+  box-shadow:
+    0 1px 3px rgba(26, 18, 8, 0.06),
+    0 4px 16px rgba(26, 18, 8, 0.04);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HERO CARD — The centrepiece
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.hero-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid rgba(184, 134, 11, 0.18);
+  box-shadow:
+    0 2px 8px rgba(26, 18, 8, 0.08),
+    0 12px 40px rgba(26, 18, 8, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+
+  /* Rich warm gradient — the visual heart of the app */
+  background:
+    radial-gradient(ellipse at 0% 0%, rgba(212, 160, 23, 0.18) 0%, transparent 55%),
+    radial-gradient(ellipse at 100% 100%, rgba(47, 98, 184, 0.08) 0%, transparent 45%),
+    linear-gradient(160deg, #fdf8ef 0%, #f5edd8 50%, #ede4c8 100%);
+}
+
+/* Gold top border — the signature accent line */
+.hero-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(184, 134, 11, 0.4) 15%,
+    rgba(212, 160, 23, 0.95) 50%,
+    rgba(184, 134, 11, 0.4) 85%,
+    transparent 100%
+  );
+}
+
+/* Subtle inner glow at top */
+.hero-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+/* ── Ornamental dot divider ─────────────────────────────────────────── */
+.ornament-dots {
+  height: 12px;
+  background: radial-gradient(circle, rgba(184, 134, 11, 0.65) 0 1.5px, transparent 2px) center /
+    20px 12px repeat-x;
+}
+
+/* ── Hero metric tiles ──────────────────────────────────────────────── */
+.hero-metric {
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(184, 134, 11, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SURFACE CARDS — Analytics, Transactions, Budgets
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.surface-card {
+  background: #faf7f2;
+  border-radius: 20px;
+  border: 1px solid rgba(184, 134, 11, 0.09);
+  box-shadow:
+    0 1px 2px rgba(26, 18, 8, 0.05),
+    0 4px 12px rgba(26, 18, 8, 0.04);
+  overflow: hidden;
+}
+
+/* Gold top accent line on surface cards */
+.surface-card--accented {
+  border-top: 2px solid rgba(184, 134, 11, 0.25);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TRANSACTION ROW
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.tx-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  transition: background 0.12s ease;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.tx-row:active {
+  background: rgba(184, 134, 11, 0.05);
+}
+
+.tx-row + .tx-row {
+  border-top: 1px solid rgba(184, 134, 11, 0.07);
+}
+
+.tx-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+}
+.tx-icon--income {
+  background: rgba(46, 125, 82, 0.1);
+  border-color: rgba(46, 125, 82, 0.12);
+}
+.tx-icon--expense {
+  background: rgba(192, 57, 43, 0.08);
+  border-color: rgba(192, 57, 43, 0.1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PERIOD TABS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.period-tabs-wrap {
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(184, 134, 11, 0.12);
+  box-shadow: 0 1px 4px rgba(26, 18, 8, 0.06);
+}
+
+.period-tab {
+  flex: 1;
+  padding: 7px 4px;
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  transition: all 0.18s ease;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: rgba(26, 18, 8, 0.45);
+}
+.period-tab.is-active {
+  background: #faf7f2;
+  color: var(--color-tg-text);
+  font-weight: 600;
+  box-shadow:
+    0 1px 3px rgba(26, 18, 8, 0.1),
+    0 0 0 1px rgba(184, 134, 11, 0.15);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CATEGORY PILLS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.category-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  border: 1px solid rgba(184, 134, 11, 0.12);
+  background: rgba(255, 255, 255, 0.6);
+  color: rgba(26, 18, 8, 0.65);
+}
+.category-pill.is-active {
+  background: var(--color-tg-button, #2f62b8);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(47, 98, 184, 0.25);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BUDGET BARS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.budget-bar-track {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(26, 18, 8, 0.07);
+  overflow: hidden;
+}
+.budget-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.65s cubic-bezier(0.22, 0.68, 0, 1.2);
+}
+.budget-bar-fill--ok {
+  background: linear-gradient(90deg, #2e7d52, #3da066);
+}
+.budget-bar-fill--warn {
+  background: linear-gradient(90deg, #b8860b, #d4a017);
+}
+.budget-bar-fill--danger {
+  background: linear-gradient(90deg, #c0392b, #e74c3c);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FORM INPUTS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.field-card {
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 16px;
+  border: 1px solid rgba(184, 134, 11, 0.12);
+  padding: 14px 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.field-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--color-tg-text);
+}
+.field-input::placeholder {
+  color: rgba(26, 18, 8, 0.3);
+}
+
+.amount-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+  color: var(--color-tg-text);
+}
+.amount-input::placeholder {
+  color: rgba(26, 18, 8, 0.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BUTTONS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 14px 20px;
+  border-radius: 16px;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: linear-gradient(180deg, #3570cc, #2a5ab8);
+  color: #ffffff;
+  box-shadow:
+    0 2px 8px rgba(47, 98, 184, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+.btn-primary:active {
+  transform: scale(0.98);
+  opacity: 0.92;
+}
+.btn-primary:disabled {
+  opacity: 0.55;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  color: rgba(26, 18, 8, 0.45);
+  transition: background 0.12s ease;
+}
+.btn-ghost:hover {
+  background: rgba(184, 134, 11, 0.07);
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(192, 57, 43, 0.2);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  background: rgba(192, 57, 43, 0.07);
+  color: var(--color-expense);
+  transition: all 0.12s ease;
+}
+.btn-danger:active {
+  background: rgba(192, 57, 43, 0.14);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TYPE TOGGLE (income / expense)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.type-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.type-btn {
+  padding: 12px 8px;
+  border-radius: 16px;
+  border: 1px solid rgba(184, 134, 11, 0.12);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: rgba(255, 255, 255, 0.55);
+  color: rgba(26, 18, 8, 0.45);
+}
+.type-btn.is-expense {
+  background: rgba(192, 57, 43, 0.08);
+  border-color: rgba(192, 57, 43, 0.22);
+  color: var(--color-expense);
+}
+.type-btn.is-income {
+  background: rgba(46, 125, 82, 0.08);
+  border-color: rgba(46, 125, 82, 0.22);
+  color: var(--color-income);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FAB
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.fab {
+  position: fixed;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  right: 20px;
+  z-index: 30;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, #3570cc, #2a5ab8);
+  color: #ffffff;
+  box-shadow:
+    0 4px 16px rgba(47, 98, 184, 0.4),
+    0 1px 4px rgba(47, 98, 184, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SKELETON
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(184, 134, 11, 0.05) 25%,
+    rgba(184, 134, 11, 0.12) 50%,
+    rgba(184, 134, 11, 0.05) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  border-radius: 16px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DONUT CHART CENTER
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.donut-center {
+  background: #faf7f2;
+  border: 1px solid rgba(184, 134, 11, 0.1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LEGEND ROWS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  transition: background 0.12s ease;
+}
+.legend-row:hover {
+  background: rgba(184, 134, 11, 0.05);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   EMPTY STATE
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 20px;
+  border: 1px dashed rgba(184, 134, 11, 0.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ERROR BANNER
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.error-banner {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(192, 57, 43, 0.07);
+  border: 1px solid rgba(192, 57, 43, 0.15);
+  font-size: 12px;
+  color: var(--color-expense);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-up {
+  animation: fade-up 0.28s cubic-bezier(0.22, 0.68, 0, 1.2) both;
+}

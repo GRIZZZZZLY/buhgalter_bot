@@ -5,6 +5,8 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.schemas.telegram import TelegramVoicePayload
+from app.services.planned_expense_service import PlannedExpenseService
+from app.services.recurring_service import RecurringService
 from app.services.audio_file_service import AudioFileService
 from app.services.transaction_service import TransactionService
 from app.services.yaml_learner_service import YamlLearnerService
@@ -39,6 +41,8 @@ class TelegramBotService:
         self.flow = flow or TelegramTextFlow(db)
         self.audio_service = audio_service or AudioFileService()
         self.transaction_service = TransactionService(db)
+        self.planned_expense_service = PlannedExpenseService(db)
+        self.recurring_service = RecurringService(db)
         self.formatter = TreasuryFormatter()
 
     def process_text_message(self, telegram_user_id: int, text: str) -> dict[str, str]:
@@ -70,6 +74,159 @@ class TelegramBotService:
         return {
             "action": "deleteall_done",
             "message": self.formatter.format_deleteall_done(deleted_count),
+        }
+
+    def process_plan_command(
+        self,
+        telegram_user_id: int,
+        title: str,
+        amount: float,
+        category: str,
+        planned_date: str,
+    ) -> dict[str, str]:
+        from datetime import date
+
+        item = self.planned_expense_service.create_manual(
+            telegram_user_id=telegram_user_id,
+            title=title,
+            amount=amount,
+            category=category,
+            planned_date=date.fromisoformat(planned_date),
+        )
+        return {
+            "action": "planned_created",
+            "message": self.formatter.format_planned_created(
+                item.title, item.amount, item.category, item.planned_date
+            ),
+        }
+
+    def process_planned_command(self, telegram_user_id: int) -> dict[str, str]:
+        from datetime import date
+
+        today = date.today()
+        items = self.planned_expense_service.list_all(telegram_user_id, today=today)
+        return {
+            "action": "planned_list",
+            "message": self.formatter.format_planned_list(
+                [
+                    {
+                        "title": item.title,
+                        "amount": item.amount,
+                        "category": item.category,
+                        "planned_date": item.planned_date,
+                        "is_overdue": item.planned_date < today.isoformat(),
+                    }
+                    for item in items
+                ]
+            ),
+        }
+
+    def confirm_planned_expense(
+        self,
+        telegram_user_id: int,
+        planned_expense_id: int,
+        actual_amount: float | None = None,
+    ) -> dict[str, str]:
+        result = self.planned_expense_service.confirm_expense(
+            telegram_user_id=telegram_user_id,
+            planned_expense_id=planned_expense_id,
+            actual_amount=actual_amount,
+        )
+        if result is None:
+            return {
+                "action": "planned_missing",
+                "message": "Этот расход уже обработан или не найден.",
+            }
+        return {
+            "action": "planned_confirmed",
+            "message": self.formatter.format_planned_confirmed(
+                result.planned.title,
+                result.transaction.amount,
+                result.planned.category,
+            ),
+        }
+
+    def cancel_planned_expense(self, telegram_user_id: int, planned_expense_id: int) -> dict[str, str]:
+        result = self.planned_expense_service.cancel_expense(
+            telegram_user_id=telegram_user_id,
+            planned_expense_id=planned_expense_id,
+        )
+        if result is None:
+            return {
+                "action": "planned_missing",
+                "message": "Этот расход уже обработан или не найден.",
+            }
+        return {
+            "action": "planned_cancelled",
+            "message": self.formatter.format_planned_cancelled(result.title),
+        }
+
+    def update_planned_date(
+        self,
+        telegram_user_id: int,
+        planned_expense_id: int,
+        planned_date: str,
+    ) -> dict[str, str]:
+        from datetime import date
+
+        result = self.planned_expense_service.update_planned_date(
+            telegram_user_id=telegram_user_id,
+            planned_expense_id=planned_expense_id,
+            planned_date=date.fromisoformat(planned_date),
+        )
+        if result is None:
+            return {
+                "action": "planned_missing",
+                "message": "Этот расход уже обработан или не найден.",
+            }
+        return {
+            "action": "planned_updated",
+            "message": self.formatter.format_planned_updated(result.title, result.planned_date),
+        }
+
+    def update_recurring_amount(self, telegram_user_id: int, recurring_id: int, amount: float) -> dict[str, str]:
+        rt = self.recurring_service.update_amount(telegram_user_id, recurring_id, amount)
+        if rt is None:
+            return {"action": "recurring_missing", "message": "Правило не найдено."}
+        return {
+            "action": "recurring_updated",
+            "message": self.formatter.format_recurring_updated(rt.title, f"{float(rt.amount):.0f}"),
+        }
+
+    def deactivate_recurring(self, telegram_user_id: int, recurring_id: int) -> dict[str, str]:
+        rt = self.recurring_service.rt_repo.get(telegram_user_id, recurring_id)
+        if rt is None:
+            return {"action": "recurring_missing", "message": "Правило не найдено."}
+        ok = self.recurring_service.deactivate(telegram_user_id, recurring_id)
+        if not ok:
+            return {"action": "recurring_missing", "message": "Правило не найдено."}
+        return {
+            "action": "recurring_deleted",
+            "message": self.formatter.format_recurring_deleted(rt.title),
+        }
+
+    def update_recurring_category(self, telegram_user_id: int, recurring_id: int, category: str) -> dict[str, str]:
+        rt = self.recurring_service.update_category(telegram_user_id, recurring_id, category)
+        if rt is None:
+            return {"action": "recurring_missing", "message": "Правило не найдено."}
+        return {
+            "action": "recurring_updated",
+            "message": f"✅ Обновил правило «{rt.title}»: категория {self.formatter.category_label(rt.category)}",
+        }
+
+    def update_recurring_schedule(
+        self,
+        telegram_user_id: int,
+        recurring_id: int,
+        frequency: str,
+        day_value: int,
+    ) -> dict[str, str]:
+        rt = self.recurring_service.update_schedule(telegram_user_id, recurring_id, frequency, day_value)
+        if rt is None:
+            return {"action": "recurring_missing", "message": "Правило не найдено."}
+        return {
+            "action": "recurring_updated",
+            "message": f"✅ Обновил правило «{rt.title}»: {self.recurring_service._format_schedule(rt)}",
         }
 
     def process_voice_message(self, payload: TelegramVoicePayload) -> tuple[dict, VoiceProcessingDebug]:

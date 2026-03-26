@@ -17,6 +17,7 @@ class TransactionType(str, Enum):
 class TransactionSource(str, Enum):
     TEXT = "text"
     VOICE = "voice"
+    WEBAPP = "webapp"
 
 
 class Transaction(Base):

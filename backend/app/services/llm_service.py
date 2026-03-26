@@ -12,7 +12,6 @@ from openai import APIError, OpenAI
 from sqlalchemy.orm import Session
 
 from app.core.settings import get_settings
-from app.repositories.transaction_repository import TransactionRepository
 from app.schemas.parser import ParseResult
 from app.services.config_loader import load_yaml
 
@@ -71,10 +70,7 @@ class LLMService:
 
     def process(self, text: str, telegram_user_id: int) -> LLMResult:
         """Parse a user message into a transaction or an advisor answer."""
-        transactions = TransactionRepository(self.db).list_for_user(
-            telegram_user_id, limit=50, offset=0, period="month"
-        )
-        system_prompt = self._build_system_prompt(transactions)
+        system_prompt = self._build_system_prompt()
 
         try:
             response = self._client.chat.completions.create(
@@ -237,22 +233,17 @@ class LLMService:
         )
         return LLMParsedItem(parsed=parsed, override_date=override_date)
 
-    def _build_system_prompt(self, transactions: list) -> str:
+    def _build_system_prompt(self) -> str:
         categories = self._categories_config["ru"]["categories"]
         category_lines = "\n".join(
-            f"- {cat['slug']}: {', '.join(str(s) for s in cat['synonyms'][:5])}"
+            f"- {cat['slug']}: {', '.join(str(s) for s in cat['synonyms'][:3])}"
             for cat in categories
         )
-        tx_lines = "\n".join(
-            f"{tx.created_at.strftime('%d.%m')}: {tx.type.value} {tx.amount} {tx.category}"
-            for tx in transactions
-        ) or "нет транзакций"
         today = datetime.now().strftime("%Y-%m-%d")
 
         return (
             f"Ты финансовый ассистент для личного бюджета. Сегодня {today}.\n\n"
             f"КАТЕГОРИИ (используй только эти slug):\n{category_lines}\n\n"
-            f"ИСТОРИЯ ТРАНЗАКЦИЙ ЗА МЕСЯЦ:\n{tx_lines}\n\n"
             "Верни JSON строго одного из двух форматов:\n"
             '1. Транзакция: {"intent":"transaction","items":[{"type":"expense"|"income",'
             '"amount":число,"category":"slug из списка","description":"строка или null","date":"YYYY-MM-DD или null"}]}\n'

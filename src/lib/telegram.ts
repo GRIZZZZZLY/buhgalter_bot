@@ -1,19 +1,54 @@
-import WebApp from '@twa-dev/sdk'
+/**
+ * Telegram Mini App SDK helpers.
+ * Uses @tma.js/sdk-react v3 — signal-based, no SDKProvider.
+ *
+ * Call initTelegramApp() once before React renders (in main.tsx).
+ */
+import {
+  init,
+  backButton,
+  mainButton,
+  themeParams,
+  viewport,
+  miniApp,
+  retrieveLaunchParams,
+} from '@tma.js/sdk-react'
 
-export function initTelegramWebApp() {
+let initialized = false
+
+export function initTelegramApp(): void {
+  if (initialized) return
+  initialized = true
+
   try {
-    WebApp.ready()
-    WebApp.expand()
-    WebApp.setHeaderColor('#f6efe1')
-    WebApp.setBackgroundColor('#f6efe1')
-  } catch {
-    // ignore outside telegram
-  }
-
-  return {
-    user: WebApp.initDataUnsafe?.user ?? null,
-    colorScheme: WebApp.colorScheme ?? 'light',
-    isTelegram: Boolean(WebApp.initDataUnsafe),
-    webApp: WebApp,
+    init()
+    miniApp.mount()
+    themeParams.mount()
+    viewport.mount()
+    backButton.mount()
+    mainButton.mount()
+  } catch (err) {
+    // Running outside Telegram (browser dev) — gracefully ignore
+    console.warn('[TMA] Running outside Telegram WebApp:', err)
   }
 }
+
+export function getInitData(): string {
+  try {
+    const params = retrieveLaunchParams()
+    return String(params.initDataRaw ?? '')
+  } catch {
+    return ''
+  }
+}
+
+export function isTelegramEnv(): boolean {
+  try {
+    retrieveLaunchParams()
+    return true
+  } catch {
+    return false
+  }
+}
+
+export { backButton, mainButton, themeParams, viewport, miniApp }

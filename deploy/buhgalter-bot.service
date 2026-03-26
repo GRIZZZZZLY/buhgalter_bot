@@ -1,0 +1,15 @@
+[Unit]
+Description=Buhgalter Bot — Telegram bot (polling)
+After=network.target buhgalter-api.service
+
+[Service]
+Type=simple
+User=buhgalter
+WorkingDirectory=/opt/buhgalter-bot/backend
+EnvironmentFile=/opt/buhgalter-bot/backend/.env
+ExecStart=/opt/buhgalter-bot/.venv/bin/python run_bot.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

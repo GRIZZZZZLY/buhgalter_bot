@@ -38,14 +38,36 @@ def test_update_transaction(db_session) -> None:
 
 
 def test_telegram_text_flow_save_and_summary(db_session) -> None:
-    flow = TelegramTextFlow(db_session)
+    from decimal import Decimal
+    from unittest.mock import patch
+    from app.services.llm_service import LLMParsedItem, LLMTransactionResult
+    from app.schemas.parser import ParseResult
 
-    save_response = flow.handle_text(telegram_user_id=555, text="доход 3000 аванс")
+    flow = TelegramTextFlow(db_session)
+    fake_parsed = ParseResult(
+        matched=True,
+        confidence=0.95,
+        confidence_label="high",
+        transaction_type="income",
+        amount=Decimal("3000"),
+        category="salary",
+        description=None,
+        pattern="llm",
+        raw_input="доход 3000 аванс",
+    )
+    fake_llm_result = LLMTransactionResult(
+        intent="transaction",
+        items=[LLMParsedItem(parsed=fake_parsed, override_date=None)],
+    )
+
+    with patch.object(flow.llm_service, "process", return_value=fake_llm_result):
+        save_response = flow.handle_text(telegram_user_id=555, text="доход 3000 аванс")
     summary_response = flow.handle_summary(telegram_user_id=555, period="month")
 
     assert save_response["action"] == "saved"
-    assert "В летопись внесено: доход 3000.00₽ — Зарплата" in save_response["message"]
-    assert "Остаток казны за месяц: +3000.00₽" in save_response["message"]
+    assert "3000.00" in save_response["message"]
+    assert "Зарплата" in save_response["message"]
+    assert "Баланс за месяц" in save_response["message"]
     assert summary_response["action"] == "summary"
-    assert "Баланс: +3000.00₽" in summary_response["message"]
-    assert "Доход: +3000.00₽" in summary_response["message"]
+    assert "Баланс: +3000.00" in summary_response["message"]
+    assert "Доход: +3000.00" in summary_response["message"]

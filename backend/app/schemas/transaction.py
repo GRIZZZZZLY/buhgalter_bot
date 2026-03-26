@@ -11,7 +11,7 @@ class TransactionItem(BaseModel):
     amount: str
     category: str
     description: str | None = None
-    source: Literal["text", "voice"]
+    source: Literal["text", "voice", "webapp"]
     raw_input: str
     confidence: float
     created_at: str
@@ -29,4 +29,11 @@ class TransactionUpdateRequest(BaseModel):
     type: Literal["income", "expense"] | None = None
     amount: str | None = Field(default=None, pattern=r"^\d+(\.\d{1,2})?$")
     category: str | None = None
+    description: str | None = Field(default=None, max_length=255)
+
+
+class TransactionCreateRequest(BaseModel):
+    type: Literal["income", "expense"]
+    amount: str = Field(pattern=r"^\d+(\.\d{1,2})?$")
+    category: str
     description: str | None = Field(default=None, max_length=255)

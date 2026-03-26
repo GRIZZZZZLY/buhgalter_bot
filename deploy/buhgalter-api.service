@@ -1,0 +1,18 @@
+[Unit]
+Description=Buhgalter Bot — FastAPI backend
+After=network.target
+
+[Service]
+Type=simple
+User=buhgalter
+WorkingDirectory=/opt/buhgalter-bot/backend
+EnvironmentFile=/opt/buhgalter-bot/backend/.env
+ExecStart=/opt/buhgalter-bot/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

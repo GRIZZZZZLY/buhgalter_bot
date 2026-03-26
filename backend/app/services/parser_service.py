@@ -1,8 +1,9 @@
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from typing import cast
 
-from app.schemas.parser import MultiParseResult, ParseResult
+from app.schemas.parser import MultiParseResult, ParseResult, TransactionTypeName
 from app.services.config_loader import load_yaml
 
 
@@ -36,6 +37,7 @@ class ParserService:
         self.verbs_config = load_yaml("verbs.yaml")
         self.patterns_config = load_yaml("patterns.yaml")
         self.category_lookup = self._build_category_lookup()
+        self.category_type_lookup = self._build_category_type_lookup()
         self.verb_lookup = self._build_verb_lookup()
         self.patterns = [
             PatternSpec(name=item["name"], regex=item["regex"])
@@ -107,11 +109,15 @@ class ParserService:
         category, description = self._resolve_category_and_description(groups)
 
         if category is not None:
+            # If verb/sign didn't determine the type, infer it from the category definition
+            if transaction_type is None:
+                transaction_type = self._type_from_category(category)
+            resolved_type = cast(TransactionTypeName, transaction_type or "expense")
             return ParseResult(
                 matched=True,
                 confidence=0.95,
                 confidence_label="high",
-                transaction_type=transaction_type or "expense",
+                transaction_type=resolved_type,
                 amount=amount,
                 category=category,
                 description=description,
@@ -122,7 +128,7 @@ class ParserService:
         if groups.get("desc") or groups.get("category"):
             fallback_label = "low" if pattern_name == "P5" and transaction_type is None else "medium"
             fallback_confidence = 0.3 if fallback_label == "low" else 0.6
-            fallback_type = transaction_type if fallback_label == "low" else (transaction_type or "expense")
+            fallback_type = cast(TransactionTypeName, transaction_type or "expense") if fallback_label == "medium" else cast(TransactionTypeName | None, transaction_type)
             fallback_category = None if fallback_label == "low" else "other"
             return ParseResult(
                 matched=True,
@@ -140,7 +146,7 @@ class ParserService:
             matched=False,
             confidence=0.3,
             confidence_label="low",
-            transaction_type=transaction_type,
+            transaction_type=cast(TransactionTypeName | None, transaction_type),
             amount=amount,
             category=None,
             description=None,
@@ -219,10 +225,28 @@ class ParserService:
         lookup: dict[str, str] = {}
         for item in self.categories_config["ru"]["categories"]:
             slug = item["slug"]
-            lookup[slug] = slug
+            lookup.setdefault(slug, slug)
             for synonym in item["synonyms"]:
-                lookup[synonym.lower()] = slug
+                # Keep the first mapping on duplicate synonyms.
+                # This prevents later categories from accidentally overriding
+                # an earlier, more natural interpretation (e.g. "кофе" -> food).
+                lookup.setdefault(synonym.lower(), slug)
         return lookup
+
+    def _build_category_type_lookup(self) -> dict[str, str]:
+        """Maps category slug -> 'income' | 'expense' | 'both'."""
+        lookup: dict[str, str] = {}
+        for item in self.categories_config["ru"]["categories"]:
+            lookup[item["slug"]] = item.get("type", "expense")
+        return lookup
+
+    def _type_from_category(self, category: str) -> str | None:
+        """Returns 'income' or 'expense' based on the category definition.
+        Returns None for 'both' categories so the caller can apply its own default."""
+        cat_type = self.category_type_lookup.get(category)
+        if cat_type in ("income", "expense"):
+            return cat_type
+        return None
 
     def normalize_category_candidate(self, text: str) -> str:
         normalized = self._cleanup_desc(self._normalize(text))
@@ -287,6 +311,13 @@ class ParserService:
         normalized = re.sub(r"\bруб(?:ля|лей)?\b", "", normalized)
         normalized = re.sub(r"\bр\b", "", normalized)
         normalized = normalized.replace("₽", "")
+        # STT artifact: Whisper transcribes spoken numbers like "двадцать одну тысячу" as "21 1000".
+        # Normalise "N 1000000" → N*1000000, "N 1000" → N*1000 before pattern matching.
+        normalized = re.sub(
+            r"\b(\d+)\s+(1000000|1000)\b",
+            lambda m: str(int(m.group(1)) * int(m.group(2))),
+            normalized,
+        )
         normalized = re.sub(r"\s+", " ", normalized)
         return normalized.strip()
 

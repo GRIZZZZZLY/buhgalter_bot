@@ -15,3 +15,7 @@ backend/runtime/audio/*
 !backend/runtime/audio/.gitkeep
 backend/runtime/logs/*
 !backend/runtime/logs/.gitkeep
+.worktrees/
+.claude/
+pytest-of-Igor/
+nul

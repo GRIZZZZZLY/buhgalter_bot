@@ -10,6 +10,7 @@ from app.models.voice_log import VoiceLog  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.user_category_mapping import UserCategoryMapping  # noqa: F401
 from app.models.category_budget import CategoryBudget  # noqa: F401
+from app.models.recurring_transaction import RecurringTransaction  # noqa: F401
 
 settings = get_settings()
 

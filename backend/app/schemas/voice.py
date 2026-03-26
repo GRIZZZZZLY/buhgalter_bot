@@ -27,3 +27,4 @@ class VoiceConfirmationResult:
     raw_category: str | None = None
     suggestions: list[str] = field(default_factory=list)
     parsed_result: ParseResult | None = None
+    saved_transaction_ids: list[str] = field(default_factory=list)
