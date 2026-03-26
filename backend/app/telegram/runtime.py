@@ -575,10 +575,14 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
     # Direct question — answer immediately (one-off, no dialog mode)
-    await update.effective_message.reply_text("🤔 Анализирую…")
+    placeholder = await update.effective_message.reply_text("🤔 Анализирую…")
     with SessionLocal() as db:
         _ensure_user(db, update)
         answer = FinancialQAService(db).answer(question, update.effective_user.id)
+    try:
+        await placeholder.delete()
+    except Exception:
+        pass
     await update.effective_message.reply_text(answer, reply_markup=advisor_keyboard())
 
 
@@ -1044,22 +1048,34 @@ async def catres_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             category = payload
             result = flow._save_from_pending(user_id, pending, category, remove_keyboard=False)
             db.commit()
-            await query.edit_message_text(result["message"], parse_mode="HTML", reply_markup=done_keyboard())
-            if result.get("saved_transaction_id"):
-                await _send_saved_with_undo(
-                    update, context, result["message"], [result["saved_transaction_id"]]
+            tx_id = result.get("saved_transaction_id")
+            if tx_id:
+                await query.edit_message_text(
+                    result["message"], parse_mode="HTML",
+                    reply_markup=saved_actions_keyboard(tx_id),
                 )
+                asyncio.create_task(
+                    _auto_remove_keyboard(context.bot, query.message.chat_id, query.message.message_id)
+                )
+            else:
+                await query.edit_message_text(result["message"], parse_mode="HTML", reply_markup=done_keyboard())
             return
 
         if action == "create":
             # payload = raw_category name
             result = flow._save_from_pending(user_id, payload, pending, payload, remove_keyboard=False)
             db.commit()
-            await query.edit_message_text(result["message"], parse_mode="HTML", reply_markup=done_keyboard())
-            if result.get("saved_transaction_id"):
-                await _send_saved_with_undo(
-                    update, context, result["message"], [result["saved_transaction_id"]]
+            tx_id = result.get("saved_transaction_id")
+            if tx_id:
+                await query.edit_message_text(
+                    result["message"], parse_mode="HTML",
+                    reply_markup=saved_actions_keyboard(tx_id),
                 )
+                asyncio.create_task(
+                    _auto_remove_keyboard(context.bot, query.message.chat_id, query.message.message_id)
+                )
+            else:
+                await query.edit_message_text(result["message"], parse_mode="HTML", reply_markup=done_keyboard())
             return
 
     await query.edit_message_text("Не удалось обработать выбор.", reply_markup=done_keyboard())
@@ -1136,8 +1152,14 @@ async def lowconf_callback_handler(update: Update, context: ContextTypes.DEFAULT
         operation_label = "доход" if tx_type == "income" else "расход"
         balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
         msg = formatter.format_saved(operation_label, str(item.amount), item.category, balance)
-        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=done_keyboard())
-        await _send_saved_with_undo(update, context, msg, [str(item.id)])
+        tx_id = str(item.id)
+        await query.edit_message_text(
+            msg, parse_mode="HTML",
+            reply_markup=saved_actions_keyboard(tx_id),
+        )
+        asyncio.create_task(
+            _auto_remove_keyboard(context.bot, query.message.chat_id, query.message.message_id)
+        )
         return
 
     await query.edit_message_text("Не удалось обработать выбор.", reply_markup=done_keyboard())
@@ -1202,8 +1224,14 @@ async def checkin_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
         balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
         msg = formatter.format_saved("расход", str(item.amount), item.category, balance)
-        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=done_keyboard())
-        await _send_saved_with_undo(update, context, msg, [str(item.id)])
+        tx_id = str(item.id)
+        await query.edit_message_text(
+            msg, parse_mode="HTML",
+            reply_markup=saved_actions_keyboard(tx_id),
+        )
+        asyncio.create_task(
+            _auto_remove_keyboard(context.bot, query.message.chat_id, query.message.message_id)
+        )
         return
 
     if action == "custom" and len(parts) > 2:
@@ -1786,10 +1814,6 @@ async def _handle_planned_input(
         llm = LLMService(db)
         result = llm.extract_planned(text, user_categories)
 
-    # Clear mode — from this point, new text is a regular transaction
-    if context.user_data:
-        context.user_data.pop("mode", None)
-
     if result is None:
         await update.effective_message.reply_text(
             "❌ Не смог разобрать. Попробуй ещё раз.",
@@ -1829,6 +1853,10 @@ async def _handle_planned_input(
 
     title = result.get("title") or ""
     amount = float(result.get("amount") or 0)
+
+    # Clear mode only on success — errors keep mode so user can retry
+    if context.user_data:
+        context.user_data.pop("mode", None)
 
     if context.user_data is not None:
         context.user_data["pending_planned"] = {
@@ -1873,10 +1901,6 @@ async def _handle_recurring_input(
         llm = LLMService(db)
         result = llm.extract_recurring(text, user_categories)
 
-    # Clear mode
-    if context.user_data:
-        context.user_data.pop("mode", None)
-
     if result is None:
         await update.effective_message.reply_text(
             "❌ Не смог разобрать. Попробуй ещё раз.",
@@ -1907,6 +1931,10 @@ async def _handle_recurring_input(
     amount = float(result.get("amount") or 0)
     frequency = result.get("frequency", "monthly")
     day_value = int(result.get("day_value") or 1)
+
+    # Clear mode only on success — errors keep mode so user can retry
+    if context.user_data:
+        context.user_data.pop("mode", None)
 
     if context.user_data is not None:
         context.user_data["pending_recurring"] = {
@@ -2476,8 +2504,13 @@ async def voice_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     tx_ids = response.get("saved_transaction_ids", [])
     if response.get("action") == "voice_confirmed" and tx_ids:
-        await query.edit_message_text(response["message"], parse_mode="HTML", reply_markup=done_keyboard())
-        await _send_saved_with_undo(update, context, response["message"], list(tx_ids))
+        # Use first tx_id for catfix correction; show unified saved_actions_keyboard
+        correction_id = tx_ids[0] if len(tx_ids) == 1 else None
+        kb = saved_actions_keyboard(correction_id) if correction_id else undo_inline_keyboard(list(tx_ids))
+        await query.edit_message_text(response["message"], parse_mode="HTML", reply_markup=kb)
+        asyncio.create_task(
+            _auto_remove_keyboard(context.bot, query.message.chat_id, query.message.message_id)
+        )
     else:
         await query.edit_message_text(response["message"], parse_mode="HTML", reply_markup=done_keyboard())
 
