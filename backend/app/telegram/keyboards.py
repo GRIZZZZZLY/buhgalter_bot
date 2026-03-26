@@ -147,12 +147,12 @@ def recurring_confirm_keyboard() -> InlineKeyboardMarkup:
 
 
 def categories_nav_keyboard(categories_by_type: dict) -> InlineKeyboardMarkup:
-    """Per-category row: emoji+name button (noop) + ✏️ + optional 🗑."""
+    """Per-category row: emoji+name button (→edit) + ✏️ + optional 🗑."""
     rows: list[list[InlineKeyboardButton]] = []
     for group_type in ("expense", "income", "both"):
         for cat in categories_by_type.get(group_type, []):
             row = [
-                _btn(f"{cat.emoji} {cat.name_ru}", f"categories:noop:{cat.slug}"),
+                _btn(f"{cat.emoji} {cat.name_ru}", f"categories:edit:{cat.slug}"),
                 _btn("✏️", f"categories:edit:{cat.slug}"),
             ]
             if cat.is_custom:
@@ -211,7 +211,7 @@ def category_delete_confirm_keyboard(slug: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             _btn("✅ Да, удалить", f"categories:confirm_delete:{slug}"),
-            _btn("Отмена", "nav:categories"),
+            _btn("❌ Отмена", "nav:categories"),
         ]
     ])
 
@@ -436,7 +436,7 @@ def planned_expense_due_keyboard(planned_id: int) -> InlineKeyboardMarkup:
             _btn("✅ Учесть", f"planned:confirm:{planned_id}"),
             _btn("✏️ Изменить сумму и учесть", f"planned:edit_amount:{planned_id}"),
         ],
-        [_btn("📅 Изменить дату", f"planned:edit_date:{planned_id}"), _btn("❌ Отменить", f"planned:cancel:{planned_id}")],
+        [_btn("📅 Изменить дату", f"planned:edit_date:{planned_id}"), _btn("❌ Отмена", f"planned:cancel:{planned_id}")],
     ])
 
 
@@ -514,7 +514,7 @@ def delete_keyboard(items: list[dict[str, str]]) -> InlineKeyboardMarkup:
 def delete_all_confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(text="Да, удалить всё", callback_data="deleteall:confirm")],
-        [InlineKeyboardButton(text="Отмена", callback_data="deleteall:cancel")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="deleteall:cancel")],
     ])
 
 
@@ -537,8 +537,8 @@ def edit_item_keyboard(transaction_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [_btn("✏️ Сумма", f"edit:amount:{transaction_id}"),
          _btn("🗂 Категория", f"edit:cat:{transaction_id}")],
-        [_btn("↕️ Тип", f"edit:type:{transaction_id}"),
-         _btn("🗑 Удалить", f"edit:del:{transaction_id}")],
+        [_btn("↕️ Тип", f"edit:type:{transaction_id}")],
+        [_btn("🗑 Удалить", f"edit:del:{transaction_id}")],
         [_back_btn("edit:select")],
     ])
 
