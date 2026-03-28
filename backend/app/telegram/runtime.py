@@ -641,6 +641,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(categories_callback_handler, pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
     application.add_handler(CallbackQueryHandler(advisor_callback_handler, pattern=r"^advisor:"))
+    application.add_handler(CallbackQueryHandler(advisor_followup_callback_handler, pattern=r"^advisor_followup:"))
     application.add_handler(CallbackQueryHandler(import_callback_handler,   pattern=r"^import:"))
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
     application.add_handler(CallbackQueryHandler(reset_callback_handler,   pattern=r"^reset:"))
@@ -740,7 +741,7 @@ async def _answer_advisor_question(
     *,
     dialog_mode: bool,
 ) -> None:
-    from app.telegram.keyboards import advisor_keyboard, advisor_session_keyboard
+    from app.telegram.keyboards import advisor_contextual_keyboard, advisor_keyboard, advisor_session_keyboard
 
     message = update.effective_message
     if message is None:
@@ -803,7 +804,25 @@ async def _answer_advisor_question(
         context.user_data["advisor_last_active"] = _time_now()
         reply_markup = advisor_session_keyboard(payload.recommendation_snapshot)
     else:
-        reply_markup = advisor_keyboard(payload.recommendation_snapshot)
+        primary = payload.recommendation_snapshot.primary if payload.recommendation_snapshot else None
+        action_type = primary.action_type if primary else None
+        # Try to extract a category hint from the primary recommendation detail/title
+        category: str | None = None
+        if primary is not None:
+            detail = getattr(primary, "detail", None) or ""
+            title = getattr(primary, "title", None) or ""
+            # Use first word of detail as category hint, fall back to title
+            for text in (detail, title):
+                if text:
+                    first_word = text.split()[0].lower() if text.split() else None
+                    if first_word:
+                        category = first_word
+                        break
+        reply_markup = advisor_contextual_keyboard(
+            action_type,
+            category=category,
+            recommendation_snapshot=payload.recommendation_snapshot,
+        )
 
     if use_edit:
         try:
@@ -1853,6 +1872,38 @@ async def advisor_callback_handler(update: Update, context: ContextTypes.DEFAULT
     context.user_data.setdefault("advisor_history", [])
     context.user_data["advisor_last_active"] = _time_now()
     await _answer_advisor_question(update, context, question, dialog_mode=True)
+
+
+async def advisor_followup_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Placeholder handler for contextual advisor follow-up buttons."""
+    query = update.callback_query
+    if query is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    data = query.data or ""
+    # advisor_followup:category_detail:<category>
+    # advisor_followup:upcoming_all
+    # advisor_followup:trend
+    _FOLLOWUP_MESSAGES = {
+        "upcoming_all": "📅 Полный список ближайших платежей — скоро будет доступен.",
+        "trend": "📈 Динамика за 3 месяца — скоро будет доступна.",
+    }
+    action = data.removeprefix("advisor_followup:")
+    if action.startswith("category_detail:"):
+        category = action.removeprefix("category_detail:").strip()
+        text = f"📊 Детальный разбор категории{' «' + category + '»' if category else ''} — скоро будет доступен."
+    else:
+        text = _FOLLOWUP_MESSAGES.get(action, "Эта функция скоро будет доступна.")
+
+    try:
+        await query.edit_message_text(text, reply_markup=None)
+    except BadRequest:
+        if update.effective_message:
+            await update.effective_message.reply_text(text)
 
 
 async def planned_input_callback_handler(

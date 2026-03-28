@@ -111,6 +111,46 @@ def advisor_keyboard(recommendations: RecommendationSnapshot | None = None) -> I
     return InlineKeyboardMarkup(rows)
 
 
+def advisor_contextual_keyboard(
+    action_type: str | None,
+    category: str | None = None,
+    recommendation_snapshot: RecommendationSnapshot | None = None,
+) -> InlineKeyboardMarkup:
+    """Keyboard for non-dialog advisor responses — buttons depend on action_type."""
+    base = [
+        _btn("← Назад", "nav:advisor"),
+        _btn("≡ Меню", "nav:menu"),
+    ]
+
+    contextual_map: dict[str, list[InlineKeyboardButton]] = {
+        "cut_costs": [
+            _btn(
+                f"📊 Разбор категории{' ' + category if category else ''}",
+                f"advisor_followup:category_detail:{category or ''}",
+            ),
+        ],
+        "prepare_payment": [
+            _btn("📅 Все ближайшие платежи", "advisor_followup:upcoming_all"),
+        ],
+        "review_budget": [
+            _btn("💰 Открыть бюджеты", "nav:budgets"),
+        ],
+        "improve_cashflow": [
+            _btn("📈 Динамика за 3 месяца", "advisor_followup:trend"),
+        ],
+    }
+
+    context_buttons = contextual_map.get(action_type or "", [])
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if context_buttons:
+        rows.append(context_buttons)
+    rows.append([_btn("📥 Скачать отчёт", "export:choose")])
+    rows.append(base)
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def advisor_session_keyboard(recommendations: RecommendationSnapshot | None = None) -> InlineKeyboardMarkup:
     """Keyboard after each advisor answer in dialog mode with action buttons and quick follow-up scenarios."""
     rows = advisor_action_rows(recommendations)
