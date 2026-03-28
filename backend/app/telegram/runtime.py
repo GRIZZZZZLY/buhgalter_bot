@@ -37,8 +37,8 @@ from app.telegram.keyboards import (
     cancel_keyboard,
     category_grid_keyboard,
     category_resolution_keyboard,
-    delete_all_confirm_keyboard,
-    deleteall_cancel_keyboard,
+    deleteall_step1_keyboard,
+    deleteall_step2_keyboard,
     delete_keyboard,
     done_keyboard,
     edit_categories_keyboard,
@@ -1011,14 +1011,10 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def deleteall_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with SessionLocal() as db:
         _ensure_user(db, update)
-    if context.user_data is not None:
-        context.user_data["awaiting_deleteall_confirm"] = True
     await update.effective_message.reply_text(
         "⚠️ Это удалит все твои транзакции, бюджеты и настройки безвозвратно.\n\n"
-        "Сначала рекомендую сделать экспорт: /export\n\n"
-        "Для подтверждения напиши: <b>УДАЛИТЬ</b>",
-        reply_markup=deleteall_cancel_keyboard(),
-        parse_mode="HTML",
+        "Сначала рекомендую сделать экспорт: /export",
+        reply_markup=deleteall_step1_keyboard(),
     )
 
 
@@ -2894,19 +2890,6 @@ async def _handle_recurring_input(
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.effective_message.text or ""
 
-    # Handle deleteall text confirmation
-    if context.user_data and context.user_data.get("awaiting_deleteall_confirm"):
-        del context.user_data["awaiting_deleteall_confirm"]
-        if text.strip() == "УДАЛИТЬ":
-            with SessionLocal() as db:
-                _ensure_user(db, update)
-                service = TelegramBotService(db)
-                response = service.delete_all_transactions(update.effective_user.id)
-            await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
-        else:
-            await update.effective_message.reply_text("❌ Удаление отменено.", reply_markup=done_keyboard())
-        return
-
     # Handle input modes (planned/recurring/budget free-form input)
     mode = context.user_data.get("mode") if context.user_data else None
     if mode == "planned_input":
@@ -3564,16 +3547,22 @@ async def delete_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         if query.data.startswith("delete:one:"):
             transaction_id = query.data.split(":", 2)[2]
             response = service.delete_transaction(update.effective_user.id, transaction_id)
-        elif query.data == "deleteall:confirm":
+        elif query.data == "deleteall:confirm_step1":
+            response = {
+                "action": "deleteall_step2",
+                "message": "🗑 Последнее подтверждение. Это действие необратимо — все данные будут удалены.",
+            }
+        elif query.data == "deleteall:confirm_final":
             response = service.delete_all_transactions(update.effective_user.id)
         elif query.data == "deleteall:cancel":
-            if context.user_data:
-                context.user_data.pop("awaiting_deleteall_confirm", None)
             response = {"action": "deleteall_cancelled", "message": formatter.format_deleteall_cancelled()}
         else:
             response = {"action": "delete_unknown", "message": "Неизвестное действие удаления."}
 
-    await query.edit_message_text(response["message"], reply_markup=done_keyboard())
+    if response.get("action") == "deleteall_step2":
+        await query.edit_message_text(response["message"], reply_markup=deleteall_step2_keyboard())
+    else:
+        await query.edit_message_text(response["message"], reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------

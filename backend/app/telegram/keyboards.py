@@ -741,16 +741,23 @@ def delete_keyboard(items: list[dict[str, str]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def delete_all_confirm_keyboard() -> InlineKeyboardMarkup:
+def deleteall_step1_keyboard() -> InlineKeyboardMarkup:
+    """Первый шаг — предупреждение с кнопкой подтверждения шага 1."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(text="Да, удалить всё", callback_data="deleteall:confirm")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="deleteall:cancel")],
+        [
+            InlineKeyboardButton("⚠️ Да, удалить ВСЕ данные", callback_data="deleteall:confirm_step1"),
+            InlineKeyboardButton("❌ Отмена", callback_data="deleteall:cancel"),
+        ],
     ])
 
 
-def deleteall_cancel_keyboard() -> InlineKeyboardMarkup:
+def deleteall_step2_keyboard() -> InlineKeyboardMarkup:
+    """Второй шаг — последнее подтверждение."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="deleteall:cancel")],
+        [
+            InlineKeyboardButton("🗑 Удалить всё (последний шанс)", callback_data="deleteall:confirm_final"),
+            InlineKeyboardButton("❌ Отмена", callback_data="deleteall:cancel"),
+        ],
     ])
 
 
