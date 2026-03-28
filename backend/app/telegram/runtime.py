@@ -659,6 +659,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
     application.add_handler(CallbackQueryHandler(advisor_callback_handler, pattern=r"^advisor:"))
     application.add_handler(CallbackQueryHandler(advisor_followup_callback_handler, pattern=r"^advisor_followup:"))
+    application.add_handler(CallbackQueryHandler(export_callback_handler,   pattern=r"^export:"))
     application.add_handler(CallbackQueryHandler(import_callback_handler,   pattern=r"^import:"))
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
     application.add_handler(CallbackQueryHandler(reset_callback_handler,   pattern=r"^reset:"))
@@ -1321,12 +1322,43 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     artifact = export_service.build(items, period=period, export_format=export_format)
 
-    from telegram import InputFile
+    from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
+
+    template_keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 Шаблон для импорта", callback_data="export:template")
+    ]])
 
     await update.effective_message.reply_document(
         document=InputFile(io.BytesIO(artifact.content), filename=artifact.filename),
         caption=artifact.caption,
+        reply_markup=template_keyboard,
     )
+
+
+_IMPORT_TEMPLATE_CSV = (
+    "date,amount,description,type,category\n"
+    "2024-01-15,1500,Продукты Перекрёсток,expense,food\n"
+    "2024-01-16,50000,Зарплата,income,salary\n"
+    "2024-01-17,450,Такси домой,expense,transport\n"
+)
+
+
+async def export_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    import io as _io
+    from telegram import InputFile as _InputFile
+
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    data = query.data
+    if data == "export:template":
+        await query.message.reply_document(
+            document=_InputFile(_io.BytesIO(_IMPORT_TEMPLATE_CSV.encode("utf-8")), filename="import_template.csv"),
+            caption="📋 Шаблон для импорта\n\nЗаполни файл и используй /import для загрузки.",
+        )
+        await query.answer()
+        return
+    await query.answer()
 
 
 # ---------------------------------------------------------------------------
