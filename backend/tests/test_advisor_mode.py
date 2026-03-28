@@ -30,3 +30,17 @@ def test_advisor_no_clear_within_timeout() -> None:
     timeout = 600
     should_clear = (time.time() - last_active) > timeout
     assert should_clear is False
+
+
+def test_advisor_state_fresh_within_timeout() -> None:
+    last_generated = time.time() - 120
+    timeout = 600
+    is_fresh = (time.time() - last_generated) <= timeout
+    assert is_fresh is True
+
+
+def test_advisor_state_stale_after_timeout() -> None:
+    last_generated = time.time() - 900
+    timeout = 600
+    is_fresh = (time.time() - last_generated) <= timeout
+    assert is_fresh is False

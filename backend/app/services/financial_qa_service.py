@@ -23,6 +23,7 @@ class AdvisorAnswerPayload:
     basis: list[str]
     warnings: list[str]
     confidence: str
+    payload_version: int = 2
     recommendations: list[str] = field(default_factory=list)
     snapshot: FinancialSnapshot | None = None
     analytics: FinancialAnalyticsSnapshot | None = None
@@ -99,6 +100,7 @@ class FinancialQAService:
             basis=computed_basis[:3],
             warnings=computed_warnings[:3],
             confidence=payload.confidence,
+            payload_version=payload.payload_version,
             recommendations=self._render_recommendations(recommendations),
             snapshot=snapshot,
             analytics=analytics,
@@ -117,6 +119,7 @@ class FinancialQAService:
             basis=basis[:3],
             warnings=warnings[:3],
             confidence=confidence,
+            payload_version=2,
         )
 
     @staticmethod
@@ -218,6 +221,7 @@ class FinancialQAService:
                 basis=[],
                 warnings=["Недостаточно данных для уверенного вывода."],
                 confidence="low",
+                payload_version=2,
                 recommendations=[],
                 snapshot=snapshot,
                 analytics=analytics,
@@ -246,6 +250,7 @@ class FinancialQAService:
                     basis=parts,
                     warnings=warnings[:3],
                     confidence="high",
+                    payload_version=2,
                     recommendations=recommendation_lines,
                     snapshot=snapshot,
                     analytics=analytics,
@@ -259,6 +264,7 @@ class FinancialQAService:
                 ],
                 warnings=[],
                 confidence="medium",
+                payload_version=2,
                 recommendations=recommendation_lines,
                 snapshot=snapshot,
                 analytics=analytics,
@@ -291,6 +297,7 @@ class FinancialQAService:
                 basis=[],
                 warnings=["Проверь, добавлены ли плановые и регулярные платежи."],
                 confidence="low",
+                payload_version=2,
                 recommendations=recommendation_lines,
                 snapshot=snapshot,
                 analytics=analytics,
@@ -326,6 +333,7 @@ class FinancialQAService:
                 basis=[f"Период: {current.year_month}"],
                 warnings=["Для тренда лучше иметь хотя бы два полных месяца данных."],
                 confidence="low",
+                payload_version=2,
                 recommendations=recommendation_lines,
                 snapshot=snapshot,
                 analytics=analytics,
@@ -340,6 +348,7 @@ class FinancialQAService:
                 basis=[f"За месяц: {top.amount:.0f}₽"],
                 warnings=warnings,
                 confidence="high",
+                payload_version=2,
                 recommendations=recommendation_lines,
                 snapshot=snapshot,
                 analytics=analytics,
@@ -357,6 +366,7 @@ class FinancialQAService:
                 basis=basis,
                 warnings=[],
                 confidence="high",
+                payload_version=2,
                 recommendations=recommendation_lines,
                 snapshot=snapshot,
                 analytics=analytics,
@@ -380,6 +390,7 @@ class FinancialQAService:
                 basis=basis[:3],
                 warnings=warnings[:3],
                 confidence="medium",
+                payload_version=2,
                 recommendations=recommendation_lines,
                 snapshot=snapshot,
                 analytics=analytics,
@@ -403,6 +414,7 @@ class FinancialQAService:
             basis=basis,
             warnings=warnings[:3],
             confidence="medium",
+            payload_version=2,
             recommendations=recommendation_lines,
             snapshot=snapshot,
             analytics=analytics,

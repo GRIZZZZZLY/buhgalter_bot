@@ -729,6 +729,15 @@ async def _answer_advisor_question(
     context.user_data["last_advisor_analytics"] = payload.analytics
     context.user_data["last_advisor_recommendations"] = payload.recommendation_snapshot
     context.user_data["last_advisor_generated_at"] = _time_now()
+    context.user_data["last_advisor_payload_version"] = payload.payload_version
+    primary = payload.recommendation_snapshot.primary if payload.recommendation_snapshot else None
+    context.user_data["last_advisor_action_type"] = primary.action_type if primary else None
+    logger.info(
+        "advisor state updated: version=%s action_type=%s fresh=%s",
+        payload.payload_version,
+        context.user_data.get("last_advisor_action_type"),
+        _advisor_state_is_fresh(context),
+    )
 
     if dialog_mode:
         history.append({"role": "user", "content": question})
@@ -751,9 +760,32 @@ async def _answer_advisor_question(
     await message.reply_text(answer, reply_markup=reply_markup)
 
 
+
+
+def _clear_advisor_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    for key in (
+        "advisor_history",
+        "advisor_last_active",
+        "last_advisor_snapshot",
+        "last_advisor_analytics",
+        "last_advisor_recommendations",
+        "last_advisor_generated_at",
+        "last_advisor_payload_version",
+        "last_advisor_action_type",
+    ):
+        context.user_data.pop(key, None)
+
+
+def _advisor_state_is_fresh(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    generated_at = context.user_data.get("last_advisor_generated_at", 0)
+    if not generated_at:
+        return False
+    return (_time_now() - float(generated_at)) <= _ADVISOR_TIMEOUT
+
 async def _enter_advisor_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from app.telegram.keyboards import advisor_onboarding_keyboard
 
+    _clear_advisor_state(context)
     context.user_data["mode"] = "advisor"
     context.user_data["advisor_history"] = []
     context.user_data["advisor_last_active"] = _time_now()
