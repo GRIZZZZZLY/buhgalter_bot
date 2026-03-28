@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from uuid import UUID
@@ -18,6 +19,22 @@ from app.telegram.formatter import TreasuryFormatter
 
 logger = logging.getLogger(__name__)
 formatter = TreasuryFormatter()
+
+# ---------------------------------------------------------------------------
+# Keyword pre-filter: signals that bypass the fast-path parser so LLM can
+# correctly classify planned / recurring intent before saving anything.
+# ---------------------------------------------------------------------------
+_PLANNED_RE = re.compile(
+    r"\b(напомни|не забудь|запланируй|поставь напоминание|напоминание|"
+    r"заплатить потом|надо заплатить|нужно заплатить|планирую заплатить|"
+    r"запланировать|занести в план)\b",
+    re.IGNORECASE,
+)
+_RECURRING_RE = re.compile(
+    r"\b(каждый|каждую|каждое|ежемесячно|еженедельно|ежедневно|"
+    r"регулярно|раз в месяц|раз в неделю|раз в день|каждые)\b",
+    re.IGNORECASE,
+)
 START_MESSAGE = formatter.format_start()
 
 # How long (seconds) a pending category resolution is kept before being discarded.
@@ -118,23 +135,30 @@ class TelegramTextFlow:
             answer = FinancialQAService(self.db).answer(normalized_text, telegram_user_id)
             return {"action": "advisor", "message": answer}
 
-        # Fast path: skip LLM when ParserService is confident
-        parsed = self.parser_service.parse(normalized_text)
-        if parsed.confidence_label == "high" and parsed.amount is not None:
-            tx = self.transaction_service.create_from_parse(
-                telegram_user_id=telegram_user_id,
-                source="text",
-                parsed=parsed,
-                override_date=None,
-            )
-            summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
-            operation_label = "доход" if tx.type == "income" else "расход"
-            return {
-                "action": "saved",
-                "message": formatter.format_saved(operation_label, tx.amount, tx.category, self._signed(summary.balance), None),
-                "saved_category": tx.category,
-                "saved_transaction_id": str(tx.id),
-            }
+        # Keyword pre-filter: planned/recurring signals must go through LLM,
+        # not the fast-path parser which would create a transaction immediately.
+        _force_llm = bool(
+            _PLANNED_RE.search(normalized_text) or _RECURRING_RE.search(normalized_text)
+        )
+
+        # Fast path: skip LLM when ParserService is confident (unless forced to LLM)
+        if not _force_llm:
+            parsed = self.parser_service.parse(normalized_text)
+            if parsed.confidence_label == "high" and parsed.amount is not None:
+                tx = self.transaction_service.create_from_parse(
+                    telegram_user_id=telegram_user_id,
+                    source="text",
+                    parsed=parsed,
+                    override_date=None,
+                )
+                summary = self.transaction_service.get_summary(telegram_user_id=telegram_user_id, period="month")
+                operation_label = "доход" if tx.type == "income" else "расход"
+                return {
+                    "action": "saved",
+                    "message": formatter.format_saved(operation_label, tx.amount, tx.category, self._signed(summary.balance), None),
+                    "saved_category": tx.category,
+                    "saved_transaction_id": str(tx.id),
+                }
 
         # LLM processing
         try:
