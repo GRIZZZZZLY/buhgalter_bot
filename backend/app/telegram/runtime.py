@@ -678,6 +678,9 @@ async def _answer_advisor_question(
     if message is None:
         return
 
+    query = update.callback_query
+    use_edit = bool(query and query.message)
+
     if dialog_mode:
         last_active = context.user_data.get("advisor_last_active", 0)
         if (_time_now() - last_active) > _ADVISOR_TIMEOUT:
@@ -686,7 +689,16 @@ async def _answer_advisor_question(
     else:
         history = []
 
-    placeholder = await message.reply_text("🤔 Анализирую…")
+    placeholder = None
+    if use_edit:
+        try:
+            await query.edit_message_text("🤔 Анализирую…")
+        except BadRequest:
+            use_edit = False
+
+    if not use_edit:
+        placeholder = await message.reply_text("🤔 Анализирую…")
+
     with SessionLocal() as db:
         _ensure_user(db, update)
         payload = FinancialQAService(db).answer_payload(question, update.effective_user.id, history=history)
@@ -698,10 +710,11 @@ async def _answer_advisor_question(
         confidence=payload.confidence,
     )
 
-    try:
-        await placeholder.delete()
-    except Exception:
-        pass
+    if placeholder is not None:
+        try:
+            await placeholder.delete()
+        except Exception:
+            pass
 
     if dialog_mode:
         history.append({"role": "user", "content": question})
@@ -713,6 +726,13 @@ async def _answer_advisor_question(
         reply_markup = advisor_session_keyboard()
     else:
         reply_markup = advisor_keyboard()
+
+    if use_edit:
+        try:
+            await query.edit_message_text(answer, reply_markup=reply_markup)
+            return
+        except BadRequest:
+            pass
 
     await message.reply_text(answer, reply_markup=reply_markup)
 
@@ -1701,7 +1721,7 @@ async def advisor_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
     slug = data.removeprefix("advisor:scenario:")
     if slug == "export":
-        await update.effective_message.reply_text(
+        await query.edit_message_text(
             "Экспорт уже доступен:\n• /export month\n• /export xlsx month\n• /export csv week\n• /export xlsx all\n\n"
             "Импорт тоже есть: просто пришли CSV/XLSX файлом, я сначала покажу dry-run превью.",
             reply_markup=done_keyboard(back_target="nav:advisor"),
@@ -1710,7 +1730,7 @@ async def advisor_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
     question = _ADVISOR_SCENARIO_QUESTIONS.get(slug)
     if not question:
-        await update.effective_message.reply_text(
+        await query.edit_message_text(
             "Не понял сценарий советника. Попробуй выбрать ещё раз.",
             reply_markup=done_keyboard(back_target="nav:advisor"),
         )
