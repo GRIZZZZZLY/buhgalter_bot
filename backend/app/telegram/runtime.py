@@ -1196,7 +1196,6 @@ async def document_message_handler(update: Update, context: ContextTypes.DEFAULT
     preview = svc.build_preview(filename=filename, content=content)
 
     if preview.ready_to_import and update.effective_user is not None:
-        from app.repositories.transaction_repository import TransactionRepository
         from app.models.transaction import Transaction as TxModel
         from sqlalchemy import select as sa_select
         from datetime import datetime as dt_cls
@@ -1212,7 +1211,11 @@ async def document_message_handler(update: Update, context: ContextTypes.DEFAULT
             )
             existing_txs = list(db.scalars(stmt).all())
             existing_keys = {
-                f"{t.created_at.date().isoformat()}:{t.amount:.2f}:{(t.description or '').lower().strip()}"
+                ImportService._dedup_key(
+                    t.created_at.date().isoformat(),
+                    f"{t.amount:.2f}",
+                    t.description,
+                )
                 for t in existing_txs
             }
         preview = svc.apply_dedup(preview, existing_keys)
