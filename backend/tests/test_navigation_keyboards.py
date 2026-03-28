@@ -52,6 +52,7 @@ def test_advisor_session_keyboard_contains_quick_followups():
     assert "advisor:scenario:budget_risks" in all_callbacks
     assert "advisor:scenario:upcoming" in all_callbacks
     assert "advisor:scenario:export" in all_callbacks
+    assert "nav:advisor" in all_callbacks
     assert "nav:menu" in all_callbacks
 
 

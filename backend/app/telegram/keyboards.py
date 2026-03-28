@@ -91,7 +91,8 @@ def advisor_session_keyboard() -> InlineKeyboardMarkup:
             _advisor_scenario_btn("cut_costs", "💡 Сократить"),
             _advisor_scenario_btn("export", "📥 Отчёт"),
         ],
-        [_btn("✕ Завершить", "nav:menu"), _menu_btn()],
+        [_back_btn("nav:advisor"), _btn("✕ Завершить", "nav:menu")],
+        [_menu_btn()],
     ])
 
 
