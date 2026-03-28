@@ -1278,14 +1278,15 @@ async def document_message_handler(update: Update, context: ContextTypes.DEFAULT
             context.user_data["pending_import_filename"] = preview.filename
 
     try:
-        await placeholder.delete()
+        await placeholder.edit_text(
+            svc.render_preview_message(preview),
+            reply_markup=_import_preview_keyboard(preview.ready_to_import),
+        )
     except BadRequest:
-        pass
-
-    await message.reply_text(
-        svc.render_preview_message(preview),
-        reply_markup=_import_preview_keyboard(preview.ready_to_import),
-    )
+        await message.reply_text(
+            svc.render_preview_message(preview),
+            reply_markup=_import_preview_keyboard(preview.ready_to_import),
+        )
 
 
 async def import_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3423,20 +3424,22 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     logger.info("voice processed: action=%s debug=%s", response.get("action"), debug)
 
-    try:
-        await context.bot.delete_message(chat_id=placeholder.chat_id, message_id=placeholder.message_id)
-    except BadRequest as exc:
-        logger.warning("voice placeholder delete failed: %s", exc)
-
     action = response.get("action", "")
 
     if action == "confirm_voice" and response.get("voice_log_id"):
-        msg = await update.effective_message.reply_text(
-            response["message"],
-            reply_markup=voice_confirmation_keyboard(response["voice_log_id"]),
-            parse_mode="HTML",
-        )
-        asyncio.create_task(_auto_remove_keyboard(context.bot, msg.chat_id, msg.message_id, VOICE_CONFIRM_TIMEOUT))
+        try:
+            await placeholder.edit_text(
+                response["message"],
+                reply_markup=voice_confirmation_keyboard(response["voice_log_id"]),
+                parse_mode="HTML",
+            )
+        except BadRequest:
+            placeholder = await update.effective_message.reply_text(
+                response["message"],
+                reply_markup=voice_confirmation_keyboard(response["voice_log_id"]),
+                parse_mode="HTML",
+            )
+        asyncio.create_task(_auto_remove_keyboard(context.bot, placeholder.chat_id, placeholder.message_id, VOICE_CONFIRM_TIMEOUT))
         return
 
     if action == "planned_confirm":
@@ -3444,11 +3447,18 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         if items:
             item = items[0]
             context.user_data["pending_planned_freeform"] = item
-            await update.effective_message.reply_text(
-                _format_planned_confirm_msg(item),
-                reply_markup=planned_freeform_keyboard(),
-                parse_mode="HTML",
-            )
+            try:
+                await placeholder.edit_text(
+                    _format_planned_confirm_msg(item),
+                    reply_markup=planned_freeform_keyboard(),
+                    parse_mode="HTML",
+                )
+            except BadRequest:
+                await update.effective_message.reply_text(
+                    _format_planned_confirm_msg(item),
+                    reply_markup=planned_freeform_keyboard(),
+                    parse_mode="HTML",
+                )
         return
 
     if action == "recurring_confirm":
@@ -3456,24 +3466,43 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         if items:
             item = items[0]
             context.user_data["pending_recurring_freeform"] = item
-            await update.effective_message.reply_text(
-                _format_recurring_confirm_msg(item),
-                reply_markup=recurring_freeform_keyboard(),
-                parse_mode="HTML",
-            )
+            try:
+                await placeholder.edit_text(
+                    _format_recurring_confirm_msg(item),
+                    reply_markup=recurring_freeform_keyboard(),
+                    parse_mode="HTML",
+                )
+            except BadRequest:
+                await update.effective_message.reply_text(
+                    _format_recurring_confirm_msg(item),
+                    reply_markup=recurring_freeform_keyboard(),
+                    parse_mode="HTML",
+                )
         return
 
     if action == "clarify_category_choice":
-        await update.effective_message.reply_text(
-            response["message"],
-            reply_markup=category_resolution_keyboard(
-                str(response.get("raw_category", "")),
-                list(response.get("suggestions", [])),
-            ),
-        )
+        try:
+            await placeholder.edit_text(
+                response["message"],
+                reply_markup=category_resolution_keyboard(
+                    str(response.get("raw_category", "")),
+                    list(response.get("suggestions", [])),
+                ),
+            )
+        except BadRequest:
+            await update.effective_message.reply_text(
+                response["message"],
+                reply_markup=category_resolution_keyboard(
+                    str(response.get("raw_category", "")),
+                    list(response.get("suggestions", [])),
+                ),
+            )
         return
 
-    await update.effective_message.reply_text(response["message"], parse_mode="HTML", reply_markup=done_keyboard())
+    try:
+        await placeholder.edit_text(response["message"], parse_mode="HTML", reply_markup=done_keyboard())
+    except BadRequest:
+        await update.effective_message.reply_text(response["message"], parse_mode="HTML", reply_markup=done_keyboard())
 
 
 # ---------------------------------------------------------------------------
