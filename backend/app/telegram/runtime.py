@@ -158,6 +158,8 @@ _scheduler: SchedulerService | None = None
 
 # Undo window — 60 seconds
 UNDO_WINDOW_SECONDS = 60
+# Voice confirmation buttons timeout — 5 minutes
+VOICE_CONFIRM_TIMEOUT = 300
 
 
 def configure_logging() -> None:
@@ -2394,6 +2396,7 @@ async def clarify_intent_callback_handler(update: Update, context: ContextTypes.
         msg = fmt.format_saved("доход" if tx.type == "income" else "расход", tx.amount, tx.category, balance, None)
         try:
             await query.edit_message_text(msg, reply_markup=saved_actions_keyboard(str(tx.id)))
+            asyncio.create_task(_auto_remove_keyboard(context.bot, query.message.chat_id, query.message.message_id))
         except BadRequest:
             pass
         return
@@ -3213,11 +3216,12 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     action = response.get("action", "")
 
     if action == "confirm_voice" and response.get("voice_log_id"):
-        await update.effective_message.reply_text(
+        msg = await update.effective_message.reply_text(
             response["message"],
             reply_markup=voice_confirmation_keyboard(response["voice_log_id"]),
             parse_mode="HTML",
         )
+        asyncio.create_task(_auto_remove_keyboard(context.bot, msg.chat_id, msg.message_id, VOICE_CONFIRM_TIMEOUT))
         return
 
     if action == "planned_confirm":
@@ -3427,11 +3431,12 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     action = response.get("action", "")
 
     if action == "confirm_voice" and response.get("voice_log_id"):
-        await update.effective_message.reply_text(
+        msg = await update.effective_message.reply_text(
             response["message"],
             reply_markup=voice_confirmation_keyboard(response["voice_log_id"]),
             parse_mode="HTML",
         )
+        asyncio.create_task(_auto_remove_keyboard(context.bot, msg.chat_id, msg.message_id, VOICE_CONFIRM_TIMEOUT))
         return
 
     if action == "planned_confirm":
