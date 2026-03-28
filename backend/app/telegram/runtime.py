@@ -1344,21 +1344,25 @@ _IMPORT_TEMPLATE_CSV = (
 
 
 async def export_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    import io as _io
-    from telegram import InputFile as _InputFile
+    import io
+    from telegram import InputFile
 
     query = update.callback_query
     if query is None or query.data is None:
         return
-    data = query.data
-    if data == "export:template":
-        await query.message.reply_document(
-            document=_InputFile(_io.BytesIO(_IMPORT_TEMPLATE_CSV.encode("utf-8")), filename="import_template.csv"),
-            caption="📋 Шаблон для импорта\n\nЗаполни файл и используй /import для загрузки.",
-        )
-        await query.answer()
-        return
-    await query.answer()
+    try:
+        if query.data == "export:template" and query.message:
+            await query.message.reply_document(
+                document=InputFile(io.BytesIO(_IMPORT_TEMPLATE_CSV.encode("utf-8")), filename="import_template.csv"),
+                caption="📋 Шаблон для импорта\n\nЗаполни файл и используй /import для загрузки.",
+            )
+    except Exception:
+        logger.exception("export_callback_handler error: data=%s", query.data)
+    finally:
+        try:
+            await query.answer()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
