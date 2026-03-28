@@ -950,17 +950,23 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     import io
-    import csv
 
+    from app.services.export_service import ExportService
+    from app.services.transaction_service import TransactionService
+
+    export_service = ExportService()
     period = "month"
-    if context.args:
-        candidate = context.args[0].strip().lower()
-        if candidate in ("today", "week", "month", "all"):
-            period = candidate
+    export_format = "csv"
+
+    for arg in context.args:
+        normalized = arg.strip().lower()
+        if normalized in {"today", "week", "month", "all"}:
+            period = export_service.normalize_period(normalized)
+        elif normalized in {"csv", "xlsx", "excel"}:
+            export_format = export_service.normalize_format(normalized)
 
     with SessionLocal() as db:
         _ensure_user(db, update)
-        from app.services.transaction_service import TransactionService
         svc = TransactionService(db)
         items = svc.list_transactions(update.effective_user.id, limit=1000, offset=0, period=period)
 
@@ -969,24 +975,13 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.effective_message.reply_text(f"Записей {period_label} нет.", reply_markup=done_keyboard())
         return
 
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["Дата", "Тип", "Сумма", "Категория", "Описание", "Источник"])
-    for item in items:
-        date_str = item.created_at[:10] if item.created_at else ""
-        type_label = "Доход" if item.type == "income" else "Расход"
-        category_label = formatter.category_label(item.category)
-        writer.writerow([date_str, type_label, item.amount, category_label, item.description or "", item.source])
-
-    period_names = {"today": "сегодня", "week": "неделю", "month": "месяц", "all": "всё время"}
-    period_filename = {"today": "today", "week": "week", "month": "month", "all": "all"}.get(period, period)
-    filename = f"finance_{period_filename}.csv"
+    artifact = export_service.build(items, period=period, export_format=export_format)
 
     from telegram import InputFile
-    csv_bytes = buf.getvalue().encode("utf-8-sig")
+
     await update.effective_message.reply_document(
-        document=InputFile(io.BytesIO(csv_bytes), filename=filename),
-        caption=f"📊 Экспорт за {period_names.get(period, period)}: {len(items)} записей",
+        document=InputFile(io.BytesIO(artifact.content), filename=artifact.filename),
+        caption=artifact.caption,
     )
 
 
@@ -1591,7 +1586,7 @@ async def advisor_callback_handler(update: Update, context: ContextTypes.DEFAULT
     slug = data.removeprefix("advisor:scenario:")
     if slug == "export":
         await update.effective_message.reply_text(
-            "Пока экспорт доступен через /export month, /export week, /export today или /export all.",
+            "Экспорт уже доступен:\n• /export month\n• /export xlsx month\n• /export csv week\n• /export xlsx all",
             reply_markup=done_keyboard(back_target="nav:advisor"),
         )
         return
