@@ -1923,7 +1923,7 @@ async def advisor_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 async def advisor_followup_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Placeholder handler for contextual advisor follow-up buttons."""
+    """Handle contextual advisor follow-up buttons by editing the current message."""
     query = update.callback_query
     if query is None:
         return
@@ -1936,16 +1936,21 @@ async def advisor_followup_callback_handler(update: Update, context: ContextType
     # advisor_followup:category_detail:<category>
     # advisor_followup:upcoming_all
     # advisor_followup:trend
-    _FOLLOWUP_MESSAGES = {
-        "upcoming_all": "📅 Полный список ближайших платежей — скоро будет доступен.",
-        "trend": "📈 Динамика за 3 месяца — скоро будет доступна.",
-    }
     action = data.removeprefix("advisor_followup:")
+
+    # Map action to a natural-language question for the QA service
     if action.startswith("category_detail:"):
         category = action.removeprefix("category_detail:").strip()
-        text = f"📊 Детальный разбор категории{' «' + category + '»' if category else ''} — скоро будет доступен."
+        if category:
+            question = f"Подробно расскажи о моих расходах в категории {category}: сколько трачу, динамика, советы по оптимизации."
+        else:
+            question = "Подробно расскажи о структуре моих расходов по категориям."
+    elif action == "upcoming_all":
+        question = "Покажи все ближайшие запланированные платежи и подписки."
+    elif action == "trend":
+        question = "Покажи динамику моих доходов и расходов за последние 3 месяца."
     else:
-        text = _FOLLOWUP_MESSAGES.get(action, "Эта функция скоро будет доступна.")
+        question = "Дай мне финансовый совет на основе моих последних транзакций."
 
     # Track which follow-up actions the user has taken in this session
     if context.user_data is not None:
@@ -1954,11 +1959,8 @@ async def advisor_followup_callback_handler(update: Update, context: ContextType
             actions_taken.append(action)
         context.user_data["advisor_actions_taken"] = actions_taken[-16:]
 
-    try:
-        await query.edit_message_text(text, reply_markup=None)
-    except BadRequest:
-        if update.effective_message:
-            await update.effective_message.reply_text(text)
+    # Delegate to _answer_advisor_question which handles edit_text internally
+    await _answer_advisor_question(update, context, question, dialog_mode=False)
 
 
 async def planned_input_callback_handler(
