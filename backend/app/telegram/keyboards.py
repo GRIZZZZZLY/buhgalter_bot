@@ -71,11 +71,11 @@ def _advisor_scenario_btn(slug: str, text: str) -> InlineKeyboardButton:
 
 def _advisor_action_target(action_type: str | None) -> tuple[str, str] | None:
     mapping = {
-        "cut_costs": ("💰 Открыть бюджеты", "nav:budgets"),
-        "budget_check": ("💰 Открыть бюджеты", "nav:budgets"),
-        "upcoming_payment": ("📋 Открыть планы", "nav:planned"),
-        "forecast_control": ("📊 Открыть сводку", "nav:stats"),
-        "top_category_pressure": ("📊 Открыть сводку", "nav:stats"),
+        "cut_costs": ("⚠️ Разобрать риск", "advisor:action:budget_risks"),
+        "budget_check": ("⚠️ Проверить бюджет", "advisor:action:budget_risks"),
+        "upcoming_payment": ("📅 Разобрать платёж", "advisor:action:upcoming"),
+        "forecast_control": ("📈 Проверить прогноз", "advisor:action:trends_3m"),
+        "top_category_pressure": ("📊 Разобрать категорию", "advisor:action:top_expenses"),
     }
     return mapping.get(action_type)
 
@@ -98,7 +98,7 @@ def advisor_action_rows(recommendations: RecommendationSnapshot | None) -> list[
             continue
         seen.add(callback)
         rows.append([_btn(label, callback)])
-    return rows[:2]
+    return rows[:3]
 
 
 def advisor_keyboard(recommendations: RecommendationSnapshot | None = None) -> InlineKeyboardMarkup:

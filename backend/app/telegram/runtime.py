@@ -1762,10 +1762,13 @@ async def advisor_callback_handler(update: Update, context: ContextTypes.DEFAULT
         pass
 
     data = query.data or ""
-    if not data.startswith("advisor:scenario:"):
+    slug = None
+    if data.startswith("advisor:scenario:"):
+        slug = data.removeprefix("advisor:scenario:")
+    elif data.startswith("advisor:action:"):
+        slug = data.removeprefix("advisor:action:")
+    else:
         return
-
-    slug = data.removeprefix("advisor:scenario:")
     if slug == "export":
         await query.edit_message_text(
             "Экспорт уже доступен:\n• /export month\n• /export xlsx month\n• /export csv week\n• /export xlsx all\n\n"

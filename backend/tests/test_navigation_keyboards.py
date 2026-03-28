@@ -97,6 +97,7 @@ def test_advisor_action_rows_map_recommendations_to_real_navigation() -> None:
     )
 
     rows = advisor_action_rows(recs)
-    assert rows[0][0].text == "💰 Открыть бюджеты"
-    assert rows[0][0].callback_data == "nav:budgets"
-    assert any(button.callback_data == "nav:planned" for row in rows for button in row)
+    assert rows[0][0].text in {"⚠️ Разобрать риск", "⚠️ Проверить бюджет"}
+    assert rows[0][0].callback_data == "advisor:action:budget_risks"
+    assert any(button.callback_data == "advisor:action:upcoming" for row in rows for button in row)
+    assert any(button.callback_data == "advisor:action:trends_3m" for row in rows for button in row)
