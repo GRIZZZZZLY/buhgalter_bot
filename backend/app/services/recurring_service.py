@@ -47,6 +47,7 @@ class RecurringService:
         category: str,
         frequency: str,
         day_value: int,
+        reminder_time: str | None = None,
     ) -> RecurringTransaction:
         rt = self.rt_repo.create(
             telegram_user_id=telegram_user_id,
@@ -56,6 +57,7 @@ class RecurringService:
             category=category,
             frequency=frequency,
             day_value=day_value,
+            reminder_time=reminder_time,
         )
         self.db.commit()
         return rt
@@ -168,6 +170,7 @@ class RecurringService:
             planned_date=date.fromisoformat(rt.next_run_date),
             source="recurring",
             recurring_transaction_id=rt.id,
+            reminder_time=rt.reminder_time,
         )
         self.rt_repo.advance(rt)
         self.db.commit()

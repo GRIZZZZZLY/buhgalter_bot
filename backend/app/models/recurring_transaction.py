@@ -28,6 +28,9 @@ class RecurringTransaction(Base):
     # ISO date string of the next scheduled run, e.g. "2026-04-01"
     next_run_date: Mapped[str] = mapped_column(String(10), nullable=False)
 
+    # "HH:MM" — time to send the due-day reminder; None = user's morning time
+    reminder_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+
     # Whether a reminder was sent the day before (reset after firing)
     reminder_sent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

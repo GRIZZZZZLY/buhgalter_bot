@@ -64,6 +64,7 @@ class LLMRecurringResult:
     category: str
     frequency: Literal["monthly", "weekly", "daily", "interval_days"]
     day_value: int
+    reminder_time: str | None  # "HH:MM" или None
 
 
 LLMResult = LLMTransactionResult | LLMAdvisorResult | LLMPlannedResult | LLMRecurringResult
@@ -320,6 +321,7 @@ class LLMService:
             category=category,
             frequency=frequency,
             day_value=day_value,
+            reminder_time=data.get("reminder_time") or None,
         )
 
     def _build_system_prompt(self) -> str:
@@ -343,7 +345,8 @@ class LLMService:
             '"planned_date":"YYYY-MM-DD или null","reminder_time":"HH:MM или null"}\n'
             '4. Регулярный платёж (каждый месяц/неделю/день): {"intent":"recurring",'
             '"title":"название","amount":число,"transaction_type":"expense"|"income",'
-            '"category":"slug","frequency":"monthly"|"weekly"|"daily"|"interval_days","day_value":число}\n\n'
+            '"category":"slug","frequency":"monthly"|"weekly"|"daily"|"interval_days","day_value":число,'
+            '"reminder_time":"HH:MM или null"}\n\n'
             "Правила:\n"
             "- Только валидный JSON без markdown-обёртки\n"
             "- category ТОЛЬКО из списка выше\n"

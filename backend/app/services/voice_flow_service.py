@@ -145,6 +145,7 @@ class VoiceFlowService:
                     "transaction_type": llm_result.transaction_type,
                     "frequency": llm_result.frequency,
                     "day_value": str(llm_result.day_value),
+                    "reminder_time": llm_result.reminder_time or "",
                 }],
             )
 
@@ -253,6 +254,7 @@ class VoiceFlowService:
                     "transaction_type": llm_result.transaction_type,
                     "frequency": llm_result.frequency,
                     "day_value": str(llm_result.day_value),
+                    "reminder_time": llm_result.reminder_time or "",
                 }],
             )
 

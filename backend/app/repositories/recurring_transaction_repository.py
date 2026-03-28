@@ -19,6 +19,7 @@ class RecurringTransactionRepository:
         category: str,
         frequency: str,
         day_value: int,
+        reminder_time: str | None = None,
     ) -> RecurringTransaction:
         next_run = self._calc_next_run(frequency, day_value, date.today())
         rt = RecurringTransaction(
@@ -30,6 +31,7 @@ class RecurringTransactionRepository:
             frequency=frequency,
             day_value=day_value,
             next_run_date=next_run.isoformat(),
+            reminder_time=reminder_time,
         )
         self.db.add(rt)
         self.db.flush()

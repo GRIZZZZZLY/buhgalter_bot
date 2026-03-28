@@ -2320,6 +2320,7 @@ async def recurring_freeform_callback_handler(update: Update, context: ContextTy
             category=pending.get("category") or "other",
             frequency=pending.get("frequency") or "monthly",
             day_value=int(pending.get("day_value") or 1),
+            reminder_time=pending.get("reminder_time") or None,
         )
 
     sign = "+" if rt.transaction_type == "income" else "−"
