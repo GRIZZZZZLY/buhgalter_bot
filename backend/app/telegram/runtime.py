@@ -66,8 +66,16 @@ def _time_now() -> float:
 _ADVISOR_TIMEOUT = 600  # 10 minutes
 
 
-def _format_advisor_payload(answer: str, basis: list[str] | None = None, warnings: list[str] | None = None, confidence: str | None = None) -> str:
+def _format_advisor_payload(
+    answer: str,
+    basis: list[str] | None = None,
+    warnings: list[str] | None = None,
+    confidence: str | None = None,
+    recommendations: list[str] | None = None,
+) -> str:
     parts = [answer.strip()]
+    if recommendations:
+        parts.append("\nСледующий ход:\n" + "\n".join(f"• {item}" for item in recommendations[:3]))
     if basis:
         parts.append("\nОснова:\n" + "\n".join(f"• {item}" for item in basis[:3]))
     if warnings:
@@ -708,6 +716,7 @@ async def _answer_advisor_question(
         basis=payload.basis,
         warnings=payload.warnings,
         confidence=payload.confidence,
+        recommendations=payload.recommendations,
     )
 
     if placeholder is not None:
@@ -715,6 +724,11 @@ async def _answer_advisor_question(
             await placeholder.delete()
         except Exception:
             pass
+
+    context.user_data["last_advisor_snapshot"] = payload.snapshot
+    context.user_data["last_advisor_analytics"] = payload.analytics
+    context.user_data["last_advisor_recommendations"] = payload.recommendation_snapshot
+    context.user_data["last_advisor_generated_at"] = _time_now()
 
     if dialog_mode:
         history.append({"role": "user", "content": question})

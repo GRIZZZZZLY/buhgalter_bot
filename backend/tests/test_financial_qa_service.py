@@ -131,3 +131,19 @@ def test_financial_qa_returns_structured_payload(db_session) -> None:
     assert payload.basis == ["Расходы 1000₽"]
     assert payload.warnings == ["Бюджет близко"]
     assert payload.confidence == "high"
+
+
+def test_financial_qa_payload_contains_recommendations_and_state(db_session) -> None:
+    service = FinancialQAService(db_session)
+    fake_response = MagicMock()
+    fake_response.choices[0].message.content = (
+        '{"answer":"Нормально.","basis":["Расходы 1000₽"],"warnings":[],"confidence":"high"}'
+    )
+
+    with patch.object(service._client.chat.completions, "create", return_value=fake_response):
+        payload = service.answer_payload("Что делать сейчас?", telegram_user_id=555)
+
+    assert isinstance(payload.recommendations, list)
+    assert payload.snapshot is not None
+    assert payload.analytics is not None
+    assert payload.recommendation_snapshot is not None
