@@ -500,3 +500,53 @@ class TreasuryFormatter:
                 f"• {item['planned_date']} — {item['title']} — {item['amount']} ₽ — {self.category_label(item['category'])}"
             )
         return "\n".join(lines)
+
+
+class AdvisorFormatter:
+    """Action-type-specific renderers for advisor answer payloads."""
+
+    def format_for_action_type(self, payload, action_type: str | None) -> str:
+        renderers = {
+            "cut_costs":        self._render_cut_costs,
+            "prepare_payment":  self._render_payment_warning,
+            "review_budget":    self._render_budget_status,
+            "improve_cashflow": self._render_cashflow_trend,
+        }
+        renderer = renderers.get(action_type or "", self._render_default)
+        return renderer(payload)
+
+    def _render_cut_costs(self, payload) -> str:
+        # Акцент: конкретная категория и сумма перерасхода
+        lines = [payload.answer]
+        if payload.basis:
+            lines.append("📊 На чём основано:")
+            for fact in payload.basis[:3]:
+                lines.append(f"  • {fact}")
+        if payload.recommendations:
+            rec = payload.recommendations[0]
+            lines.append(f"\n→ {rec}")
+        return "\n".join(lines)
+
+    def _render_payment_warning(self, payload) -> str:
+        # Акцент: даты и суммы ближайших платежей
+        lines = [payload.answer]
+        if payload.warnings:
+            for w in payload.warnings:
+                lines.append(f"⚠️ {w}")
+        return "\n".join(lines)
+
+    def _render_budget_status(self, payload) -> str:
+        # Акцент: процент использования бюджетов — answer уже содержит цифры
+        return payload.answer
+
+    def _render_cashflow_trend(self, payload) -> str:
+        # Акцент: динамика, было/стало, тренд
+        lines = [payload.answer]
+        if payload.basis:
+            lines.append("📈 Данные за период:")
+            for fact in payload.basis:
+                lines.append(f"  {fact}")
+        return "\n".join(lines)
+
+    def _render_default(self, payload) -> str:
+        return payload.answer

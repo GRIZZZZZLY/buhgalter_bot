@@ -90,6 +90,8 @@ def _format_advisor_payload(
     confidence: str | None = None,
     recommendations: list[str] | None = None,
     response_mode: ResponseMode = ResponseMode.FULL,
+    action_type: str | None = None,
+    _payload_obj=None,
 ) -> str:
     if response_mode == ResponseMode.SHORT:
         return answer.strip()
@@ -104,6 +106,11 @@ def _format_advisor_payload(
             title = str(primary)
             parts.append(f"→ {title}")
         return "\n\n".join(p for p in parts if p)
+
+    # FULL mode: use action-type-specific renderer when action_type is provided
+    if action_type and _payload_obj is not None:
+        from app.telegram.formatter import AdvisorFormatter
+        return AdvisorFormatter().format_for_action_type(_payload_obj, action_type)
 
     # FULL mode: original full rendering
     parts = [answer.strip()]
@@ -795,6 +802,8 @@ async def _answer_advisor_question(
             session_context=session_ctx if dialog_mode else None,
         )
 
+    _primary = payload.recommendation_snapshot.primary if payload.recommendation_snapshot else None
+    _action_type = _primary.action_type if _primary else None
     answer = _format_advisor_payload(
         payload.answer,
         basis=payload.basis,
@@ -802,6 +811,8 @@ async def _answer_advisor_question(
         confidence=payload.confidence,
         recommendations=payload.recommendations,
         response_mode=payload.response_mode,
+        action_type=_action_type,
+        _payload_obj=payload,
     )
 
     context.user_data["last_advisor_snapshot"] = payload.snapshot
