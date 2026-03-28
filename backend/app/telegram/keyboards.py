@@ -840,7 +840,7 @@ def onboarding_step3_keyboard() -> InlineKeyboardMarkup:
     """Step 3: open summary or advisor."""
     return InlineKeyboardMarkup([
         [
-            _btn("📊 Открыть сводку", "nav:summary"),
+            _btn("📊 Открыть сводку", "nav:stats"),
             _btn("🧠 Задать вопрос", "nav:advisor"),
         ]
     ])

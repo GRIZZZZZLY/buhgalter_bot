@@ -689,7 +689,10 @@ async def onboarding_callback_handler(update: Update, context: ContextTypes.DEFA
         pass
 
     if query.data == "onboarding:skip_budget":
-        ob_text, ob_parse, _ = _onboarding.on_budget_or_skip(context.user_data or {})
+        if context.user_data is None:
+            await query.edit_message_text("❌ Сессия устарела.", reply_markup=done_keyboard())
+            return
+        ob_text, ob_parse, _ = _onboarding.on_budget_or_skip(context.user_data)
         if ob_text:
             await query.edit_message_text(
                 ob_text, parse_mode=ob_parse, reply_markup=onboarding_step3_keyboard()
@@ -2470,7 +2473,11 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
                 return
         except (ValueError, TypeError):
-            pass
+            await update.effective_message.reply_text(
+                "Введи число, например: <b>50000</b>",
+                parse_mode="HTML",
+            )
+            return
         # Not a number — treat as normal transaction (fall through)
 
     # Handle /edit awaiting amount input
