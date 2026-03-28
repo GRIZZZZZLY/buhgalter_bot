@@ -517,7 +517,7 @@ class AdvisorFormatter:
 
     def _render_cut_costs(self, payload) -> str:
         # Акцент: конкретная категория и сумма перерасхода
-        lines = [payload.answer]
+        lines = [payload.answer or ""]
         if payload.basis:
             lines.append("📊 На чём основано:")
             for fact in payload.basis[:3]:
@@ -529,7 +529,7 @@ class AdvisorFormatter:
 
     def _render_payment_warning(self, payload) -> str:
         # Акцент: даты и суммы ближайших платежей
-        lines = [payload.answer]
+        lines = [payload.answer or ""]
         if payload.warnings:
             for w in payload.warnings:
                 lines.append(f"⚠️ {w}")
@@ -537,16 +537,16 @@ class AdvisorFormatter:
 
     def _render_budget_status(self, payload) -> str:
         # Акцент: процент использования бюджетов — answer уже содержит цифры
-        return payload.answer
+        return payload.answer or ""
 
     def _render_cashflow_trend(self, payload) -> str:
         # Акцент: динамика, было/стало, тренд
-        lines = [payload.answer]
+        lines = [payload.answer or ""]
         if payload.basis:
             lines.append("📈 Данные за период:")
-            for fact in payload.basis:
+            for fact in payload.basis[:5]:
                 lines.append(f"  {fact}")
         return "\n".join(lines)
 
     def _render_default(self, payload) -> str:
-        return payload.answer
+        return payload.answer or ""

@@ -28,7 +28,7 @@ from app.services.planned_expense_service import parse_plan_args
 from app.services.recurring_service import RecurringService, parse_recurring_args, parse_recurring_schedule_args
 from app.services.scheduler_service import SchedulerService
 from app.telegram.bot_service import TelegramBotService
-from app.telegram.formatter import TreasuryFormatter
+from app.telegram.formatter import AdvisorFormatter, TreasuryFormatter
 from app.telegram.handlers import START_MESSAGE
 from app.telegram.keyboards import (
     advisor_contextual_keyboard,
@@ -109,7 +109,6 @@ def _format_advisor_payload(
 
     # FULL mode: use action-type-specific renderer when action_type is provided
     if action_type and _payload_obj is not None:
-        from app.telegram.formatter import AdvisorFormatter
         return AdvisorFormatter().format_for_action_type(_payload_obj, action_type)
 
     # FULL mode: original full rendering
