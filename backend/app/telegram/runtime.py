@@ -31,7 +31,9 @@ from app.telegram.bot_service import TelegramBotService
 from app.telegram.formatter import TreasuryFormatter
 from app.telegram.handlers import START_MESSAGE
 from app.telegram.keyboards import (
+    advisor_contextual_keyboard,
     advisor_keyboard,
+    advisor_session_keyboard,
     cancel_keyboard,
     category_grid_keyboard,
     category_resolution_keyboard,
@@ -741,8 +743,6 @@ async def _answer_advisor_question(
     *,
     dialog_mode: bool,
 ) -> None:
-    from app.telegram.keyboards import advisor_contextual_keyboard, advisor_keyboard, advisor_session_keyboard
-
     message = update.effective_message
     if message is None:
         return
