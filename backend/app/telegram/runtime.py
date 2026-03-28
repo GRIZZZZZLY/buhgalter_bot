@@ -22,7 +22,7 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.user_category_mapping_repository import UserCategoryMappingRepository
 from app.schemas.telegram import TelegramVoicePayload
 from app.services.analytics_service import AnalyticsService
-from app.services.financial_qa_service import FinancialQAService
+from app.services.financial_qa_service import FinancialQAService, ResponseMode
 from app.services.nav_service import NavService
 from app.services.planned_expense_service import parse_plan_args
 from app.services.recurring_service import RecurringService, parse_recurring_args, parse_recurring_schedule_args
@@ -78,7 +78,23 @@ def _format_advisor_payload(
     warnings: list[str] | None = None,
     confidence: str | None = None,
     recommendations: list[str] | None = None,
+    response_mode: ResponseMode = ResponseMode.FULL,
 ) -> str:
+    if response_mode == ResponseMode.SHORT:
+        return answer.strip()
+
+    if response_mode == ResponseMode.NORMAL:
+        parts = [answer.strip()]
+        if warnings:
+            parts.append("⚠️ " + " · ".join(warnings[:2]))
+        if recommendations:
+            primary = recommendations[0]
+            # recommendations are plain strings; only use .title attr if it's not the built-in str method
+            title = primary.title if (hasattr(primary, "title") and not isinstance(primary, str)) else str(primary)
+            parts.append(f"→ {title}")
+        return "\n\n".join(p for p in parts if p)
+
+    # FULL mode: original full rendering
     parts = [answer.strip()]
     if recommendations:
         parts.append("\nСледующий ход:\n" + "\n".join(f"• {item}" for item in recommendations[:3]))
@@ -761,6 +777,7 @@ async def _answer_advisor_question(
         warnings=payload.warnings,
         confidence=payload.confidence,
         recommendations=payload.recommendations,
+        response_mode=payload.response_mode,
     )
 
     context.user_data["last_advisor_snapshot"] = payload.snapshot

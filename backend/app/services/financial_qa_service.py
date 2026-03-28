@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from openai import APIError, OpenAI
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,23 @@ logger = logging.getLogger(__name__)
 _FALLBACK = "Не смог получить ответ — попробуй чуть позже."
 
 
+class ResponseMode(Enum):
+    SHORT = "short"    # only answer, 1-2 sentences
+    NORMAL = "normal"  # answer + warnings + primary recommendation
+    FULL = "full"      # full payload (existing behavior)
+
+
+_INTENT_TO_MODE: dict[AdvisorIntent, ResponseMode] = {
+    AdvisorIntent.RECENT:          ResponseMode.SHORT,
+    AdvisorIntent.BUDGET_CHECK:    ResponseMode.NORMAL,
+    AdvisorIntent.CATEGORY_SPEND:  ResponseMode.NORMAL,
+    AdvisorIntent.TREND_ANALYSIS:  ResponseMode.FULL,
+    AdvisorIntent.ADVICE:          ResponseMode.FULL,
+    AdvisorIntent.UPCOMING:        ResponseMode.NORMAL,
+    AdvisorIntent.GENERAL:         ResponseMode.NORMAL,
+}
+
+
 @dataclass(frozen=True)
 class AdvisorAnswerPayload:
     answer: str
@@ -28,6 +46,7 @@ class AdvisorAnswerPayload:
     snapshot: FinancialSnapshot | None = None
     analytics: FinancialAnalyticsSnapshot | None = None
     recommendation_snapshot: RecommendationSnapshot | None = None
+    response_mode: ResponseMode = ResponseMode.NORMAL
 
 
 class FinancialQAService:
@@ -55,6 +74,7 @@ class FinancialQAService:
         history: list[dict] | None = None,
     ) -> AdvisorAnswerPayload:
         route = self._intent_router.route(question)
+        mode = _INTENT_TO_MODE.get(route.intent, ResponseMode.NORMAL)
         snapshot = self._snapshot_service.build(telegram_user_id)
         analytics = self._analytics_service.build(snapshot)
         recommendations = self._recommendation_service.build(snapshot, analytics)
@@ -76,7 +96,7 @@ class FinancialQAService:
             payload = self._payload_from_llm_data(data)
             if not payload.answer:
                 return self._fallback_payload(snapshot, analytics, recommendations, route.intent)
-            return self._with_computed_state(payload, snapshot, analytics, recommendations)
+            return self._with_computed_state(payload, snapshot, analytics, recommendations, mode)
         except APIError as exc:
             logger.error("FinancialQA LLM error: %s", exc)
             return self._fallback_payload(snapshot, analytics, recommendations, route.intent)
@@ -90,6 +110,7 @@ class FinancialQAService:
         snapshot: FinancialSnapshot,
         analytics: FinancialAnalyticsSnapshot,
         recommendations: RecommendationSnapshot,
+        mode: ResponseMode = ResponseMode.NORMAL,
     ) -> AdvisorAnswerPayload:
         computed_basis = list(payload.basis)
         if recommendations.primary and recommendations.primary.detail not in computed_basis:
@@ -105,6 +126,7 @@ class FinancialQAService:
             snapshot=snapshot,
             analytics=analytics,
             recommendation_snapshot=recommendations,
+            response_mode=mode,
         )
 
     def _payload_from_llm_data(self, data: dict) -> AdvisorAnswerPayload:
@@ -154,6 +176,14 @@ class FinancialQAService:
             "пользователя — откажи. Не пиши код, рецепты, стихи, советы по здоровью или что-либо "
             "кроме финансов. Вежливо напомни что ты финансовый помощник и предложи задать "
             "финансовый вопрос.\n\n"
+            "Правила общения:\n"
+            "- Если вопрос простой (цифра, факт) — отвечай одним предложением\n"
+            "- Не повторяй вопрос пользователя в ответе\n"
+            "- Не добавляй фраз «Исходя из ваших данных...» — это очевидно\n"
+            "- Не пиши «Рекомендую вам...» — просто скажи что делать\n"
+            "- Если всё хорошо — скажи это прямо, не ищи проблемы\n"
+            "- Числа округляй до целых рублей в тексте\n\n"
+            "Тон: коллега который хорошо разбирается в финансах, а не финансовый консультант пишущий отчёт.\n\n"
             f"{quality_note}\n\n"
             "Уже вычисленные рекомендации и риски:\n"
             + "\n".join(f"- {item}" for item in recs_text[:3])
@@ -434,6 +464,22 @@ class FinancialQAService:
         if analytics.primary_risk:
             lines.append(f"  Главный риск: {analytics.primary_risk.detail}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _render_by_mode(payload: "AdvisorAnswerPayload", mode: ResponseMode) -> str:
+        if mode == ResponseMode.SHORT:
+            return payload.answer
+        if mode == ResponseMode.NORMAL:
+            parts = [payload.answer]
+            if payload.warnings:
+                parts.append("⚠️ " + " · ".join(payload.warnings[:2]))
+            if payload.recommendations:
+                primary = payload.recommendations[0]
+                title = primary.title if (hasattr(primary, "title") and not isinstance(primary, str)) else str(primary)
+                parts.append(f"→ {title}")
+            return "\n\n".join(parts)
+        # FULL: delegate to caller (_format_advisor_payload in runtime.py)
+        return payload.answer
 
     @staticmethod
     def _render_recommendations(recommendations: RecommendationSnapshot) -> list[str]:
