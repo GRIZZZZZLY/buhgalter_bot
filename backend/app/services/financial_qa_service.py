@@ -4,13 +4,12 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from decimal import Decimal
-
 from openai import APIError, OpenAI
 from sqlalchemy.orm import Session
 
 from app.core.settings import get_settings
 from app.services.advisor_intent_router import AdvisorIntent, AdvisorIntentRouter
+from app.services.financial_analytics_service import FinancialAnalyticsService
 from app.services.financial_snapshot_service import FinancialSnapshot, FinancialSnapshotService
 
 logger = logging.getLogger(__name__)
@@ -37,6 +36,7 @@ class FinancialQAService:
         self._model = settings.llm_model
         self._intent_router = AdvisorIntentRouter()
         self._snapshot_service = FinancialSnapshotService(db)
+        self._analytics_service = FinancialAnalyticsService()
 
     def answer(self, question: str, telegram_user_id: int, history: list[dict] | None = None) -> str:
         return self.answer_payload(question, telegram_user_id, history=history).answer
@@ -50,6 +50,7 @@ class FinancialQAService:
         """Answer a financial question using the user's real transaction data."""
         route = self._intent_router.route(question)
         snapshot = self._snapshot_service.build(telegram_user_id)
+        analytics = self._analytics_service.build(snapshot)
         context = self._build_context(telegram_user_id, route.normalized_question)
         system = self._build_system_prompt(context)
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
@@ -66,13 +67,13 @@ class FinancialQAService:
             raw = response.choices[0].message.content or ""
             data = json.loads(raw)
             payload = self._payload_from_llm_data(data)
-            return payload if payload.answer else self._fallback_payload(snapshot, route.intent)
+            return payload if payload.answer else self._fallback_payload(snapshot, analytics, route.intent)
         except APIError as exc:
             logger.error("FinancialQA LLM error: %s", exc)
-            return self._fallback_payload(snapshot, route.intent)
+            return self._fallback_payload(snapshot, analytics, route.intent)
         except Exception as exc:
             logger.error("FinancialQA unexpected error: %s", exc)
-            return self._fallback_payload(snapshot, route.intent)
+            return self._fallback_payload(snapshot, analytics, route.intent)
 
     def _payload_from_llm_data(self, data: dict) -> AdvisorAnswerPayload:
         answer = str(data.get("answer") or "").strip()
@@ -106,9 +107,10 @@ class FinancialQAService:
     def _build_context(self, telegram_user_id: int, question: str | None = None) -> str:
         route = self._intent_router.route(question or "")
         snapshot = self._snapshot_service.build(telegram_user_id)
-        return self._render_context(snapshot, route.intent)
+        analytics = self._analytics_service.build(snapshot)
+        return self._render_context(snapshot, analytics, route.intent)
 
-    def _render_context(self, snapshot: FinancialSnapshot, intent: AdvisorIntent) -> str:
+    def _render_context(self, snapshot: FinancialSnapshot, analytics, intent: AdvisorIntent) -> str:
         summary = snapshot.summary
         sections: list[str] = [
             f"Сегодня: {snapshot.today}",
@@ -116,6 +118,7 @@ class FinancialQAService:
                 f"Баланс этого месяца: {summary.balance:.2f}₽ "
                 f"(доходы {summary.income:.2f}₽, расходы {summary.expenses:.2f}₽)"
             ),
+            self._render_analytics(analytics),
         ]
 
         always_recent = intent in {AdvisorIntent.RECENT, AdvisorIntent.ADVICE, AdvisorIntent.GENERAL}
@@ -163,7 +166,7 @@ class FinancialQAService:
             "Если данных недостаточно для ответа — скажи об этом."
         )
 
-    def _fallback_payload(self, snapshot: FinancialSnapshot, intent: AdvisorIntent) -> AdvisorAnswerPayload:
+    def _fallback_payload(self, snapshot: FinancialSnapshot, analytics, intent: AdvisorIntent) -> AdvisorAnswerPayload:
         if not snapshot.has_any_activity:
             return AdvisorAnswerPayload(
                 answer="Пока у тебя мало финансовых данных. Сначала добавь несколько операций, и я смогу подсказать точнее.",
@@ -173,6 +176,9 @@ class FinancialQAService:
             )
 
         summary = snapshot.summary
+        risk = analytics.primary_risk
+        forecast = analytics.forecast
+        budget_health = analytics.budget_health
 
         if intent == AdvisorIntent.BUDGET_CHECK and snapshot.budgets:
             risky = [item for item in snapshot.budgets if item.warning]
@@ -181,15 +187,21 @@ class FinancialQAService:
                     f"{item.category} — {item.percent_used}% ({item.spent_amount:.0f}/{item.limit_amount:.0f}₽)"
                     for item in risky[:3]
                 ]
+                warnings = ["Категории выше 90% бюджета уже близки к перерасходу."]
+                if budget_health.score < 100:
+                    warnings.append(f"Budget score сейчас {budget_health.score}/100.")
                 return AdvisorAnswerPayload(
                     answer="По бюджетам уже виден риск перерасхода. Лучше сначала разобрать эти категории.",
                     basis=parts,
-                    warnings=["Категории выше 90% бюджета уже близки к перерасходу."],
+                    warnings=warnings[:3],
                     confidence="high",
                 )
             return AdvisorAnswerPayload(
                 answer="Пока бюджеты выглядят спокойно: критичных превышений не видно.",
-                basis=[f"Всего активных бюджетов: {len(snapshot.budgets)}"],
+                basis=[
+                    f"Всего активных бюджетов: {len(snapshot.budgets)}",
+                    f"Budget score: {budget_health.score}/100",
+                ],
                 warnings=[],
                 confidence="medium",
             )
@@ -207,7 +219,7 @@ class FinancialQAService:
                 return AdvisorAnswerPayload(
                     answer=f"Сейчас в фокусе ближайшие обязательные траты: {lead.lower()}.",
                     basis=basis,
-                    warnings=[],
+                    warnings=[risk.detail] if risk and risk.title == "upcoming_payment" else [],
                     confidence="medium",
                 )
             return AdvisorAnswerPayload(
@@ -224,12 +236,16 @@ class FinancialQAService:
                 delta = current.expenses - previous.expenses
                 trend = "выросли" if delta > 0 else "снизились"
                 return AdvisorAnswerPayload(
-                    answer=f"В {current.year_month} расходы {trend} относительно предыдущего месяца.",
+                    answer=(
+                        f"В {current.year_month} расходы {trend} относительно предыдущего месяца. "
+                        f"Если темп сохранится, месяц может закрыться около {forecast.projected_expenses:.0f}₽ расходов."
+                    ),
                     basis=[
                         f"{current.year_month}: {current.expenses:.0f}₽",
                         f"{previous.year_month}: {previous.expenses:.0f}₽",
+                        f"Прогноз на конец месяца: {forecast.projected_expenses:.0f}₽",
                     ],
-                    warnings=[],
+                    warnings=[risk.detail] if risk and risk.title == "month_forecast_over_budget" else [],
                     confidence="medium",
                 )
             return AdvisorAnswerPayload(
@@ -244,7 +260,7 @@ class FinancialQAService:
             return AdvisorAnswerPayload(
                 answer=f"Сейчас крупнейшая категория расходов — {top.category}.",
                 basis=[f"За месяц: {top.amount:.0f}₽"],
-                warnings=[],
+                warnings=[risk.detail] if risk and risk.title == "top_category_pressure" else [],
                 confidence="high",
             )
 
@@ -262,35 +278,50 @@ class FinancialQAService:
             )
 
         if intent == AdvisorIntent.ADVICE:
-            basis: list[str] = []
-            warnings: list[str] = []
+            basis = [
+                f"Прогноз расходов к концу месяца: {forecast.projected_expenses:.0f}₽",
+                f"Budget score: {budget_health.score}/100",
+            ]
             if snapshot.top_categories:
                 top = snapshot.top_categories[0]
                 basis.append(f"Самая тяжёлая категория сейчас — {top.category} ({top.amount:.0f}₽)")
-            risky = [item for item in snapshot.budgets if item.warning]
-            if risky:
-                warnings.append(f"Бюджет по {risky[0].category} уже на {risky[0].percent_used}%")
-            if basis or warnings:
-                return AdvisorAnswerPayload(
-                    answer="Сейчас главный сигнал в том, что стоит начать с самой тяжёлой категории и проверки перегретых бюджетов.",
-                    basis=basis,
-                    warnings=warnings,
-                    confidence="medium",
-                )
+            warnings = [risk.detail] if risk else []
+            return AdvisorAnswerPayload(
+                answer="Сейчас лучший ход — смотреть на прогноз месяца и самый сильный текущий риск, а не просто на общий баланс.",
+                basis=basis[:3],
+                warnings=warnings[:3],
+                confidence="medium",
+            )
 
+        basis = [
+            f"Доходы: {summary.income:.0f}₽",
+            f"Расходы: {summary.expenses:.0f}₽",
+            f"Прогноз расходов к концу месяца: {forecast.projected_expenses:.0f}₽",
+        ]
+        warnings = [risk.detail] if risk else []
         return AdvisorAnswerPayload(
             answer=(
-                f"Сейчас за месяц у тебя доходы {summary.income:.0f}₽, расходы {summary.expenses:.0f}₽, "
-                f"баланс {summary.balance:.0f}₽. Если хочешь, могу отдельно разобрать бюджеты, категории или ближайшие платежи."
+                f"Сейчас за месяц у тебя доходы {summary.income:.0f}₽, расходы {summary.expenses:.0f}₽, баланс {summary.balance:.0f}₽. "
+                f"Если темп сохранится, месяц может закрыться около {forecast.projected_expenses:.0f}₽ расходов."
             ),
-            basis=[
-                f"Доходы: {summary.income:.0f}₽",
-                f"Расходы: {summary.expenses:.0f}₽",
-                f"Баланс: {summary.balance:.0f}₽",
-            ],
-            warnings=[],
+            basis=basis,
+            warnings=warnings[:3],
             confidence="medium",
         )
+
+    @staticmethod
+    def _render_analytics(analytics) -> str:
+        lines = [
+            "АНАЛИТИКА:",
+            (
+                f"  Прогноз на конец месяца: расходы {analytics.forecast.projected_expenses:.0f}₽, "
+                f"доходы {analytics.forecast.projected_income:.0f}₽"
+            ),
+            f"  Budget score: {analytics.budget_health.score}/100",
+        ]
+        if analytics.primary_risk:
+            lines.append(f"  Главный риск: {analytics.primary_risk.detail}")
+        return "\n".join(lines)
 
     @staticmethod
     def _render_categories(snapshot: FinancialSnapshot) -> str:
