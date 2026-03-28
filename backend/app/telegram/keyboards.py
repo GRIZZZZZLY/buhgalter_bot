@@ -692,6 +692,12 @@ def delete_all_confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def deleteall_cancel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="deleteall:cancel")],
+    ])
+
+
 # ---------------------------------------------------------------------------
 # Edit section
 # ---------------------------------------------------------------------------
@@ -820,6 +826,25 @@ def recurring_category_keyboard(recurring_id: int, categories: list[str]) -> Inl
 # ---------------------------------------------------------------------------
 # Suggestion approval keyboard (/improve_categories)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Onboarding keyboards
+# ---------------------------------------------------------------------------
+
+def onboarding_step2_keyboard() -> InlineKeyboardMarkup:
+    """Step 2: skip budget button."""
+    return InlineKeyboardMarkup([[_btn("Пропустить →", "onboarding:skip_budget")]])
+
+
+def onboarding_step3_keyboard() -> InlineKeyboardMarkup:
+    """Step 3: open summary or advisor."""
+    return InlineKeyboardMarkup([
+        [
+            _btn("📊 Открыть сводку", "nav:summary"),
+            _btn("🧠 Задать вопрос", "nav:advisor"),
+        ]
+    ])
+
 
 def suggestion_keyboard(suggestion_key: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[

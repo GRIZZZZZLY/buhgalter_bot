@@ -36,6 +36,7 @@ from app.telegram.keyboards import (
     category_grid_keyboard,
     category_resolution_keyboard,
     delete_all_confirm_keyboard,
+    deleteall_cancel_keyboard,
     delete_keyboard,
     done_keyboard,
     edit_categories_keyboard,
@@ -46,6 +47,8 @@ from app.telegram.keyboards import (
     low_confidence_category_keyboard,
     low_confidence_keyboard,
     main_menu_inline_keyboard,
+    onboarding_step2_keyboard,
+    onboarding_step3_keyboard,
     planned_expense_due_keyboard,
     planned_manage_keyboard,
     recurring_category_keyboard,
@@ -57,6 +60,9 @@ from app.telegram.keyboards import (
     undo_inline_keyboard,
     voice_confirmation_keyboard,
 )
+from app.telegram.onboarding import OnboardingFlow, ONBOARDING_STEP_KEY
+
+_onboarding = OnboardingFlow()
 
 import time as _time
 
@@ -115,8 +121,8 @@ formatter = TreasuryFormatter()
 # Global scheduler reference (set during startup)
 _scheduler: SchedulerService | None = None
 
-# Undo window — 30 seconds
-UNDO_WINDOW_SECONDS = 30
+# Undo window — 60 seconds
+UNDO_WINDOW_SECONDS = 60
 
 
 def configure_logging() -> None:
@@ -138,6 +144,13 @@ async def on_startup(app: Application) -> None:
     _scheduler = SchedulerService(app)
     _scheduler.start()
     logger.info("scheduler started")
+    from telegram import BotCommand
+    await app.bot.set_my_commands([
+        BotCommand("menu", "Главное меню"),
+        BotCommand("ask", "Спросить советника"),
+        BotCommand("export", "Экспорт данных"),
+        BotCommand("import", "Импорт данных"),
+    ])
 
 
 async def on_shutdown(app: Application) -> None:
@@ -615,6 +628,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(import_callback_handler,   pattern=r"^import:"))
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
     application.add_handler(CallbackQueryHandler(reset_callback_handler,   pattern=r"^reset:"))
+    application.add_handler(CallbackQueryHandler(onboarding_callback_handler, pattern=r"^onboarding:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
     application.add_handler(MessageHandler(filters.Document.ALL, document_message_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
@@ -628,6 +642,12 @@ def build_application() -> Application:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with SessionLocal() as db:
         _ensure_user(db, update)
+
+    # Start onboarding for new users (step key not yet set)
+    if context.user_data is not None and context.user_data.get(ONBOARDING_STEP_KEY) is None:
+        text, parse_mode = _onboarding.start(context.user_data)
+        await update.effective_message.reply_text(text, parse_mode=parse_mode)
+        return
 
     settings = get_settings()
     webapp_kb = start_keyboard(settings.telegram_webhook_url or None)
@@ -653,6 +673,27 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         formatter.format_main_menu_screen(),
         reply_markup=main_menu_inline_keyboard(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Onboarding callback handler
+# ---------------------------------------------------------------------------
+
+async def onboarding_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
+    if query.data == "onboarding:skip_budget":
+        ob_text, ob_parse, _ = _onboarding.on_budget_or_skip(context.user_data or {})
+        if ob_text:
+            await query.edit_message_text(
+                ob_text, parse_mode=ob_parse, reply_markup=onboarding_step3_keyboard()
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -719,12 +760,6 @@ async def _answer_advisor_question(
         recommendations=payload.recommendations,
     )
 
-    if placeholder is not None:
-        try:
-            await placeholder.delete()
-        except Exception:
-            pass
-
     context.user_data["last_advisor_snapshot"] = payload.snapshot
     context.user_data["last_advisor_analytics"] = payload.analytics
     context.user_data["last_advisor_recommendations"] = payload.recommendation_snapshot
@@ -755,6 +790,13 @@ async def _answer_advisor_question(
             await query.edit_message_text(answer, reply_markup=reply_markup)
             return
         except BadRequest:
+            pass
+
+    if placeholder is not None:
+        try:
+            await placeholder.edit_text(answer, reply_markup=reply_markup)
+            return
+        except Exception:
             pass
 
     await message.reply_text(answer, reply_markup=reply_markup)
@@ -826,12 +868,14 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def deleteall_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with SessionLocal() as db:
         _ensure_user(db, update)
-        service = TelegramBotService(db)
-        response = service.process_delete_all_command(update.effective_user.id)
-
+    if context.user_data is not None:
+        context.user_data["awaiting_deleteall_confirm"] = True
     await update.effective_message.reply_text(
-        response["message"],
-        reply_markup=delete_all_confirm_keyboard(),
+        "⚠️ Это удалит все твои транзакции, бюджеты и настройки безвозвратно.\n\n"
+        "Сначала рекомендую сделать экспорт: /export\n\n"
+        "Для подтверждения напиши: <b>УДАЛИТЬ</b>",
+        reply_markup=deleteall_cancel_keyboard(),
+        parse_mode="HTML",
     )
 
 
@@ -2369,6 +2413,19 @@ async def _handle_recurring_input(
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.effective_message.text or ""
 
+    # Handle deleteall text confirmation
+    if context.user_data and context.user_data.get("awaiting_deleteall_confirm"):
+        del context.user_data["awaiting_deleteall_confirm"]
+        if text.strip() == "УДАЛИТЬ":
+            with SessionLocal() as db:
+                _ensure_user(db, update)
+                service = TelegramBotService(db)
+                response = service.delete_all_transactions(update.effective_user.id)
+            await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
+        else:
+            await update.effective_message.reply_text("❌ Удаление отменено.", reply_markup=done_keyboard())
+        return
+
     # Handle input modes (planned/recurring/budget free-form input)
     mode = context.user_data.get("mode") if context.user_data else None
     if mode == "planned_input":
@@ -2394,6 +2451,27 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         result = _handle_settings_input(update.effective_user.id, awaiting, text.strip())
         await update.effective_message.reply_text(result, reply_markup=done_keyboard(back_target="nav:settings"))
         return
+
+    # Handle onboarding step 2: user types a budget amount
+    if context.user_data and context.user_data.get(ONBOARDING_STEP_KEY) == 2:
+        raw = text.strip().replace(",", ".").replace(" ", "")
+        try:
+            budget_amount = float(raw)
+            if budget_amount > 0:
+                with SessionLocal() as db:
+                    _ensure_user(db, update)
+                    user_obj = UserRepository(db).get_by_telegram_id(update.effective_user.id)
+                    if user_obj:
+                        UserRepository(db).update_settings(user_obj, budget_amount=budget_amount)
+                        db.commit()
+                ob_text, ob_parse, _ = _onboarding.on_budget_or_skip(context.user_data)
+                await update.effective_message.reply_text(
+                    ob_text, parse_mode=ob_parse, reply_markup=onboarding_step3_keyboard()
+                )
+                return
+        except (ValueError, TypeError):
+            pass
+        # Not a number — treat as normal transaction (fall through)
 
     # Handle /edit awaiting amount input
     awaiting_edit = context.user_data.get("awaiting_edit") if context.user_data else None
@@ -2720,6 +2798,13 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                         )
         except Exception:
             logger.exception("realtime insight failed")
+        # Onboarding step 1: first transaction saved — advance to step 2
+        if context.user_data and context.user_data.get(ONBOARDING_STEP_KEY) == 1:
+            ob_text, ob_parse, _ = _onboarding.on_first_transaction(context.user_data)
+            if ob_text:
+                await update.effective_message.reply_text(
+                    ob_text, parse_mode=ob_parse, reply_markup=onboarding_step2_keyboard()
+                )
         return
 
     if action == "advisor":
@@ -2940,6 +3025,8 @@ async def delete_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         elif query.data == "deleteall:confirm":
             response = service.delete_all_transactions(update.effective_user.id)
         elif query.data == "deleteall:cancel":
+            if context.user_data:
+                context.user_data.pop("awaiting_deleteall_confirm", None)
             response = {"action": "deleteall_cancelled", "message": formatter.format_deleteall_cancelled()}
         else:
             response = {"action": "delete_unknown", "message": "Неизвестное действие удаления."}
