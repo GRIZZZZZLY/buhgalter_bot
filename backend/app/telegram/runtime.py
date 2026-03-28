@@ -784,7 +784,10 @@ async def _answer_advisor_question(
             use_edit = False
 
     if not use_edit:
-        placeholder = await message.reply_text("🤔 Анализирую…")
+        try:
+            placeholder = await message.reply_text("🤔 Анализирую…")
+        except Exception:
+            placeholder = None
 
     exclude_types: list[str] = list(context.user_data.get(_SHOWN_RECOMMENDATIONS_KEY, []))
     session_ctx = {
@@ -1929,7 +1932,7 @@ async def advisor_followup_callback_handler(update: Update, context: ContextType
         return
     try:
         await query.answer()
-    except BadRequest:
+    except Exception:
         pass
 
     data = query.data or ""
