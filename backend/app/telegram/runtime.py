@@ -3559,10 +3559,13 @@ async def delete_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         else:
             response = {"action": "delete_unknown", "message": "Неизвестное действие удаления."}
 
-    if response.get("action") == "deleteall_step2":
-        await query.edit_message_text(response["message"], reply_markup=deleteall_step2_keyboard())
-    else:
-        await query.edit_message_text(response["message"], reply_markup=done_keyboard())
+    try:
+        if response.get("action") == "deleteall_step2":
+            await query.edit_message_text(response["message"], reply_markup=deleteall_step2_keyboard())
+        else:
+            await query.edit_message_text(response["message"], reply_markup=done_keyboard())
+    except BadRequest as exc:
+        logger.warning("delete_callback edit failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
