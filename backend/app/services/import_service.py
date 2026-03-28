@@ -73,7 +73,7 @@ class ImportService:
             try:
                 normalized = str(amount_raw).replace("₽", "").replace(" ", "").replace(",", ".")
                 amount = float(normalized)
-                if amount < 0:
+                if amount <= 0:
                     errors.append(VALIDATION_MESSAGES["negative_amount"])
                 if amount > 10_000_000:
                     errors.append(VALIDATION_MESSAGES["amount_too_large"])
@@ -339,6 +339,8 @@ class ImportService:
             raise ValueError(f"непонятная сумма «{value}»") from exc
         if amount <= 0:
             raise ValueError("сумма должна быть больше нуля")
+        if amount > 10_000_000:
+            raise ValueError(f"amount too large: {amount}")
         return amount
 
     def _normalize_category(self, value: str) -> str:
@@ -361,16 +363,23 @@ class ImportService:
     @staticmethod
     def _normalize_date(value: str) -> date:
         raw = value.strip()
+        parsed_date: date | None = None
         try:
-            return date.fromisoformat(raw)
+            parsed_date = date.fromisoformat(raw)
         except ValueError:
             pass
-        for parser in ("%d.%m.%Y", "%Y/%m/%d"):
-            try:
-                return datetime.strptime(raw, parser).date()
-            except ValueError:
-                continue
-        raise ValueError(f"непонятная дата «{value}»")
+        if parsed_date is None:
+            for parser in ("%d.%m.%Y", "%Y/%m/%d"):
+                try:
+                    parsed_date = datetime.strptime(raw, parser).date()
+                    break
+                except ValueError:
+                    continue
+        if parsed_date is None:
+            raise ValueError(f"непонятная дата «{value}»")
+        if parsed_date > date.today():
+            raise ValueError(f"future date: {parsed_date}")
+        return parsed_date
 
     @staticmethod
     def _decode_csv(content: bytes) -> str:
