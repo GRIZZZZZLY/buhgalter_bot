@@ -70,6 +70,7 @@ class TranscriptPostprocessor:
         normalized = self._replace_dictionary(normalized, self.STORE_MAP)
         normalized = self._replace_dictionary(normalized, self.SLANG_MAP)
         normalized = self._replace_number_phrases(normalized)
+        normalized = self._normalize_digit_multipliers(normalized)
         normalized = self._normalize_currency(normalized)
         normalized = self._cleanup_spacing(normalized)
         return normalized
@@ -112,6 +113,18 @@ class TranscriptPostprocessor:
             total += current
             result.append(str(total))
         return " ".join(result)
+
+    @staticmethod
+    def _normalize_digit_multipliers(text: str) -> str:
+        """Handle STT hybrid output: digit + multiplier word as digit.
+        Whisper often transcribes «пятнадцать тысяч» as «15 1000».
+        Convert: «15 1000» → «15000», «3 1000000» → «3000000».
+        """
+        return re.sub(
+            r"\b(\d+)\s+(1000000|1000)\b",
+            lambda m: str(int(m.group(1)) * int(m.group(2))),
+            text,
+        )
 
     @staticmethod
     def _normalize_currency(text: str) -> str:
