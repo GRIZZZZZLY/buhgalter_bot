@@ -170,6 +170,38 @@ class TelegramTextFlow:
             answer = FinancialQAService(self.db).answer(normalized_text, telegram_user_id)
             return {"action": "advisor", "message": answer}
 
+        # Confidence < 0.75 → ask user to clarify intent
+        if getattr(llm_result, "confidence", 1.0) < 0.75:
+            pending: dict = {"text": normalized_text, "intent": llm_result.intent}
+            if isinstance(llm_result, LLMTransactionResult) and llm_result.items:
+                item = llm_result.items[0]
+                pending["amount"] = str(item.parsed.amount)
+                pending["category"] = item.parsed.category or "other"
+                pending["description"] = item.parsed.description or ""
+                pending["tx_type"] = item.parsed.transaction_type or "expense"
+            elif isinstance(llm_result, LLMPlannedResult):
+                pending["amount"] = str(llm_result.amount)
+                pending["category"] = llm_result.category
+                pending["title"] = llm_result.title
+                pending["planned_date"] = llm_result.planned_date.isoformat() if llm_result.planned_date else ""
+                pending["reminder_time"] = llm_result.reminder_time or ""
+            elif isinstance(llm_result, LLMRecurringResult):
+                pending["amount"] = str(llm_result.amount)
+                pending["category"] = llm_result.category
+                pending["title"] = llm_result.title
+                pending["transaction_type"] = llm_result.transaction_type
+                pending["frequency"] = llm_result.frequency
+                pending["day_value"] = str(llm_result.day_value)
+                pending["reminder_time"] = llm_result.reminder_time or ""
+            amount_display = pending.get("amount", "?")
+            return {
+                "action": "needs_clarification",
+                "pending": pending,
+                "message": (
+                    f"Платёж на {amount_display} ₽ — уточни, что сделать:"
+                ),
+            }
+
         if isinstance(llm_result, LLMPlannedResult):
             return {
                 "action": "planned_confirm",

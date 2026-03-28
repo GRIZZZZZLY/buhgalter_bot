@@ -714,6 +714,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
     application.add_handler(CallbackQueryHandler(reset_callback_handler,   pattern=r"^reset:"))
     application.add_handler(CallbackQueryHandler(onboarding_callback_handler, pattern=r"^onboarding:"))
+    application.add_handler(CallbackQueryHandler(clarify_intent_callback_handler, pattern=r"^clarify:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
     application.add_handler(MessageHandler(filters.Document.ALL, document_message_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
@@ -2336,6 +2337,115 @@ async def recurring_freeform_callback_handler(update: Update, context: ContextTy
 
 
 # ---------------------------------------------------------------------------
+# Intent clarification callback (clarify:transaction / planned / recurring / cancel)
+# ---------------------------------------------------------------------------
+
+async def clarify_intent_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    chosen = query.data.split(":")[1]  # transaction | planned | recurring | cancel
+
+    if chosen == "cancel":
+        if context.user_data:
+            context.user_data.pop("pending_clarification", None)
+        try:
+            await query.edit_message_text("Отменено.", reply_markup=main_menu_inline_keyboard())
+        except BadRequest:
+            pass
+        return
+
+    pending = (context.user_data or {}).pop("pending_clarification", None)
+    if not pending:
+        try:
+            await query.edit_message_text("❌ Данные устарели. Начни заново.", reply_markup=main_menu_inline_keyboard())
+        except BadRequest:
+            pass
+        return
+
+    telegram_user_id = update.effective_user.id
+
+    if chosen == "transaction":
+        from app.services.transaction_service import TransactionService
+        from app.schemas.parser import ParseResult
+        from decimal import Decimal
+        with SessionLocal() as db:
+            _ensure_user(db, update)
+            svc = TransactionService(db)
+            parsed = ParseResult(
+                matched=True,
+                confidence=0.9,
+                confidence_label="high",
+                transaction_type=pending.get("tx_type") or "expense",
+                amount=Decimal(str(pending.get("amount") or 0)),
+                category=pending.get("category") or "other",
+                description=pending.get("description") or None,
+                pattern="clarify",
+                raw_input=pending.get("text") or "",
+            )
+            tx = svc.create_from_parse(telegram_user_id=telegram_user_id, source="text", parsed=parsed, override_date=None)
+            summary = svc.get_summary(telegram_user_id=telegram_user_id, period="month")
+        from app.telegram.formatter import TreasuryFormatter
+        fmt = TreasuryFormatter()
+        from app.telegram.keyboards import saved_actions_keyboard
+        sign = "+" if tx.type == "income" else "−"
+        balance = summary.balance if summary.balance.startswith("-") else f"+{summary.balance}"
+        msg = fmt.format_saved("доход" if tx.type == "income" else "расход", tx.amount, tx.category, balance, None)
+        try:
+            await query.edit_message_text(msg, reply_markup=saved_actions_keyboard(str(tx.id)))
+        except BadRequest:
+            pass
+        return
+
+    if chosen == "planned":
+        from app.telegram.keyboards import planned_freeform_keyboard
+        item = {
+            "title": pending.get("title") or pending.get("description") or "Платёж",
+            "amount": pending.get("amount") or "0",
+            "category": pending.get("category") or "other",
+            "planned_date": pending.get("planned_date") or "",
+            "reminder_time": pending.get("reminder_time") or "",
+        }
+        context.user_data["pending_planned_freeform"] = item
+        try:
+            await query.edit_message_text(
+                _format_planned_confirm_msg(item),
+                reply_markup=planned_freeform_keyboard(),
+                parse_mode="HTML",
+            )
+        except BadRequest:
+            pass
+        return
+
+    if chosen == "recurring":
+        from app.telegram.keyboards import recurring_freeform_keyboard
+        item = {
+            "title": pending.get("title") or pending.get("description") or "Платёж",
+            "amount": pending.get("amount") or "0",
+            "category": pending.get("category") or "other",
+            "transaction_type": pending.get("transaction_type") or pending.get("tx_type") or "expense",
+            "frequency": pending.get("frequency") or "monthly",
+            "day_value": pending.get("day_value") or "1",
+            "reminder_time": pending.get("reminder_time") or "",
+        }
+        context.user_data["pending_recurring_freeform"] = item
+        try:
+            await query.edit_message_text(
+                _format_recurring_confirm_msg(item),
+                reply_markup=recurring_freeform_keyboard(),
+                parse_mode="HTML",
+            )
+        except BadRequest:
+            pass
+        return
+
+
+# ---------------------------------------------------------------------------
 # /budget
 # ---------------------------------------------------------------------------
 
@@ -3166,6 +3276,15 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.effective_message.reply_text(
             response["message"],
             reply_markup=low_confidence_keyboard(str(response.get("amount", "0"))),
+        )
+        return
+
+    if action == "needs_clarification":
+        from app.telegram.keyboards import intent_clarify_keyboard
+        context.user_data["pending_clarification"] = response.get("pending", {})
+        await update.effective_message.reply_text(
+            response["message"],
+            reply_markup=intent_clarify_keyboard(),
         )
         return
 

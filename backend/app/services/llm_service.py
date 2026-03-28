@@ -37,6 +37,7 @@ class LLMParsedItem:
 class LLMTransactionResult:
     intent: Literal["transaction"]
     items: list[LLMParsedItem]
+    confidence: float = 1.0  # 0.0–1.0, how certain LLM is about the intent
 
 
 @dataclass
@@ -53,6 +54,7 @@ class LLMPlannedResult:
     category: str
     planned_date: date | None  # None → завтра по умолчанию
     reminder_time: str | None  # "HH:MM" или None
+    confidence: float = 1.0
 
 
 @dataclass
@@ -65,9 +67,18 @@ class LLMRecurringResult:
     frequency: Literal["monthly", "weekly", "daily", "interval_days"]
     day_value: int
     reminder_time: str | None  # "HH:MM" или None
+    confidence: float = 1.0
 
 
 LLMResult = LLMTransactionResult | LLMAdvisorResult | LLMPlannedResult | LLMRecurringResult
+
+
+def _parse_confidence(data: dict) -> float:
+    try:
+        v = float(data.get("confidence", 1.0))
+        return max(0.0, min(1.0, v))
+    except (TypeError, ValueError):
+        return 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +227,8 @@ class LLMService:
             if not raw_items:
                 raise LLMUnavailableError("empty transaction items list")
             items = [self._parse_item(item, original_text) for item in raw_items]
-            return LLMTransactionResult(intent="transaction", items=items)
+            confidence = _parse_confidence(data)
+            return LLMTransactionResult(intent="transaction", items=items, confidence=confidence)
 
         if intent == "planned":
             return self._parse_planned(data)
@@ -288,6 +300,7 @@ class LLMService:
             category=category,
             planned_date=planned_date,
             reminder_time=reminder_time,
+            confidence=_parse_confidence(data),
         )
 
     def _parse_recurring(self, data: dict) -> LLMRecurringResult:
@@ -322,6 +335,7 @@ class LLMService:
             frequency=frequency,
             day_value=day_value,
             reminder_time=data.get("reminder_time") or None,
+            confidence=_parse_confidence(data),
         )
 
     def _build_system_prompt(self) -> str:
@@ -337,13 +351,13 @@ class LLMService:
             f"Ты финансовый ассистент для личного бюджета. Сегодня {today}, завтра {tomorrow}.\n\n"
             f"КАТЕГОРИИ (используй только эти slug):\n{category_lines}\n\n"
             "Верни JSON строго одного из четырёх форматов:\n"
-            '1. Транзакция (уже произошла): {"intent":"transaction","items":[{"type":"expense"|"income",'
+            '1. Транзакция (уже произошла): {"intent":"transaction","confidence":0.0-1.0,"items":[{"type":"expense"|"income",'
             '"amount":число,"category":"slug","description":"строка или null","date":"YYYY-MM-DD или null"}]}\n'
             '2. Вопрос/совет: {"intent":"advisor","answer":"ответ на русском языке"}\n'
-            '3. Запланированный платёж (в будущем, напомни, не забудь): {"intent":"planned",'
+            '3. Запланированный платёж (в будущем, напомни, не забудь): {"intent":"planned","confidence":0.0-1.0,'
             '"title":"название","amount":число,"category":"slug",'
             '"planned_date":"YYYY-MM-DD или null","reminder_time":"HH:MM или null"}\n'
-            '4. Регулярный платёж (каждый месяц/неделю/день): {"intent":"recurring",'
+            '4. Регулярный платёж (каждый месяц/неделю/день): {"intent":"recurring","confidence":0.0-1.0,'
             '"title":"название","amount":число,"transaction_type":"expense"|"income",'
             '"category":"slug","frequency":"monthly"|"weekly"|"daily"|"interval_days","day_value":число,'
             '"reminder_time":"HH:MM или null"}\n\n'
@@ -352,6 +366,7 @@ class LLMService:
             "- category ТОЛЬКО из списка выше\n"
             "- date=null если речь идёт о сегодня (для transaction)\n"
             "- Если сумма не указана — это advisor\n"
+            "- confidence: 0.95-1.0 если намерение очевидно, 0.5-0.74 если неоднозначно (например, платёж упомянут без явного указания — уже оплачен, запланирован или регулярный)\n"
             '- Ключевые слова для planned: "напомни", "не забудь", "заплатить потом", "запланируй", "поставь напоминание"\n'
             '- Ключевые слова для recurring: "каждый месяц", "ежемесячно", "каждую неделю", "регулярно", "каждый день"\n'
             '- reminder_time: "утром"=09:00, "днём"=13:00, "вечером"=19:00, "ночью"=22:00; null если не упомянуто\n'

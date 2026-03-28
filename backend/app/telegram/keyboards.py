@@ -920,3 +920,17 @@ def grouped_suggestion_keyboard(items: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def intent_clarify_keyboard() -> InlineKeyboardMarkup:
+    """Ask user to clarify payment intent when LLM confidence < 0.75."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Уже оплачено", callback_data="clarify:transaction"),
+            InlineKeyboardButton("📅 Запланировать", callback_data="clarify:planned"),
+        ],
+        [
+            InlineKeyboardButton("🔄 Регулярный", callback_data="clarify:recurring"),
+            InlineKeyboardButton("❌ Отмена", callback_data="clarify:cancel"),
+        ],
+    ])
+
+
