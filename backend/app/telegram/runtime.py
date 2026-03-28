@@ -1764,11 +1764,7 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop("mode", None)
         context.user_data.pop("pending_planned", None)
         context.user_data.pop("pending_recurring", None)
-        context.user_data.pop("advisor_history", None)
-        context.user_data.pop("advisor_last_active", None)
-        context.user_data.pop("advisor_session_topics", None)
-        context.user_data.pop("advisor_actions_taken", None)
-        context.user_data.pop("advisor_session_start", None)
+        _clear_advisor_state(context)
 
     try:
         with SessionLocal() as db:
