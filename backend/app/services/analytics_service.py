@@ -53,14 +53,7 @@ class AnalyticsService:
         """Build a full budget status report for the user."""
         budgets = self.budget_repo.get_all_for_user(user.telegram_user_id)
         if not budgets:
-            return (
-                "\U0001f4ca У тебя пока нет бюджетов по категориям.\n\n"
-                "Установи бюджет:\n"
-                "/budget еда 15000\n"
-                "/budget транспорт 5000\n\n"
-                "Или удали:\n"
-                "/budget еда 0"
-            )
+            return formatter.format_empty_budgets()
 
         summary = self.tx_repo.get_summary(user.telegram_user_id, period="month")
 

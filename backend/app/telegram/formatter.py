@@ -156,6 +156,34 @@ class TreasuryFormatter:
         )
 
     # ------------------------------------------------------------------
+    # Empty states
+    # ------------------------------------------------------------------
+
+    def format_empty_summary(self) -> str:
+        return (
+            "📊 Пока нет записей за этот месяц.\n\n"
+            "Начни прямо здесь — напиши трату:\n"
+            "  <i>такси 300</i> или <i>зарплата 50000</i>"
+        )
+
+    def format_empty_budgets(self) -> str:
+        return (
+            "💰 Бюджеты не настроены.\n\n"
+            "Установи лимиты чтобы видеть:\n"
+            "• сколько осталось до конца месяца\n"
+            "• где превышаешь план\n"
+            "• прогноз советника по рискам"
+        )
+
+    def format_empty_planned(self) -> str:
+        return (
+            "📋 Запланированных платежей нет.\n\n"
+            "Добавь аренду, подписки или другие\n"
+            "регулярные расходы — советник будет\n"
+            "предупреждать заранее."
+        )
+
+    # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
 
@@ -307,6 +335,13 @@ class TreasuryFormatter:
         top_items: list[dict[str, str]],
         period: str = "month",
     ) -> str:
+        # Show empty state hint when there are no transactions this period
+        try:
+            has_data = float(income_total.replace(",", "")) != 0 or float(expense_total.replace(",", "")) != 0
+        except (ValueError, AttributeError):
+            has_data = bool(top_items)
+        if not has_data and period == "month":
+            return self.format_empty_summary()
         header = self._period_header(period)
         sign = "+" if not balance.startswith("-") else ""
         lines = [f"📊 *Сводка за {header}*\n"]
@@ -395,7 +430,7 @@ class TreasuryFormatter:
         return f"✅ Запланировано: {title} — {amount} ₽, {self.category_label(category)}, {planned_date}"
 
     def format_planned_empty(self) -> str:
-        return "Запланированных расходов нет."
+        return self.format_empty_planned()
 
     def format_planned_list(self, items: list[dict[str, str]]) -> str:
         if not items:
