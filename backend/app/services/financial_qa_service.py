@@ -73,6 +73,7 @@ class FinancialQAService:
         telegram_user_id: int,
         history: list[dict] | None = None,
         exclude_action_types: list[str] | None = None,
+        session_context: dict | None = None,
     ) -> AdvisorAnswerPayload:
         route = self._intent_router.route(question)
         mode = _INTENT_TO_MODE.get(route.intent, ResponseMode.NORMAL)
@@ -80,6 +81,8 @@ class FinancialQAService:
         analytics = self._analytics_service.build(snapshot)
         recommendations = self._recommendation_service.build(snapshot, analytics, exclude_action_types=exclude_action_types)
         context = self._render_context(snapshot, analytics, route.intent)
+        if session_context:
+            context = self._build_context_with_session(context, session_context)
         system = self._build_system_prompt(context, recommendations)
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
         if history:
@@ -194,6 +197,22 @@ class FinancialQAService:
             + "Опирайся только на предоставленные данные и уже вычисленные риски. "
             + "Дай максимум один главный next step. Если данных недостаточно для ответа — скажи об этом."
         )
+
+    @staticmethod
+    def _build_context_with_session(snapshot_context: str, session_context: dict) -> str:
+        topics = session_context.get("advisor_session_topics", [])
+        actions = session_context.get("advisor_actions_taken", [])
+        parts: list[str] = []
+        if topics:
+            parts.append(
+                f"В этой сессии уже обсуждали: {', '.join(topics)}. "
+                "Не повторяй те же рекомендации — предложи следующий шаг."
+            )
+        if actions:
+            parts.append(f"Пользователь уже нажимал: {', '.join(actions)}.")
+        if parts:
+            return snapshot_context + "\n" + " ".join(parts)
+        return snapshot_context
 
     def _render_context(
         self,

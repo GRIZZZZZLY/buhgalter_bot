@@ -763,6 +763,9 @@ async def _answer_advisor_question(
         last_active = context.user_data.get("advisor_last_active", 0)
         if (_time_now() - last_active) > _ADVISOR_TIMEOUT:
             context.user_data["advisor_history"] = []
+            context.user_data["advisor_session_topics"] = []
+            context.user_data["advisor_actions_taken"] = []
+            context.user_data["advisor_session_start"] = _time_now()
         history: list[dict] = list(context.user_data.get("advisor_history", []))
     else:
         history = []
@@ -778,6 +781,10 @@ async def _answer_advisor_question(
         placeholder = await message.reply_text("🤔 Анализирую…")
 
     exclude_types: list[str] = list(context.user_data.get(_SHOWN_RECOMMENDATIONS_KEY, []))
+    session_ctx = {
+        "advisor_session_topics": context.user_data.get("advisor_session_topics", []),
+        "advisor_actions_taken": context.user_data.get("advisor_actions_taken", []),
+    }
     with SessionLocal() as db:
         _ensure_user(db, update)
         payload = FinancialQAService(db).answer_payload(
@@ -785,6 +792,7 @@ async def _answer_advisor_question(
             update.effective_user.id,
             history=history,
             exclude_action_types=exclude_types or None,
+            session_context=session_ctx if dialog_mode else None,
         )
 
     answer = _format_advisor_payload(
@@ -805,6 +813,14 @@ async def _answer_advisor_question(
     context.user_data["last_advisor_action_type"] = primary.action_type if primary else None
     if primary:
         _track_shown_recommendation(context, primary.action_type)
+
+    if dialog_mode:
+        topic_key = context.user_data.get("last_advisor_action_type") or "general"
+        topics: list[str] = list(context.user_data.get("advisor_session_topics", []))
+        if topic_key not in topics:
+            topics.append(topic_key)
+        context.user_data["advisor_session_topics"] = topics[-8:]
+
     logger.info(
         "advisor state updated: version=%s action_type=%s fresh=%s",
         payload.payload_version,
@@ -870,6 +886,9 @@ def _clear_advisor_state(context: ContextTypes.DEFAULT_TYPE) -> None:
         "last_advisor_generated_at",
         "last_advisor_payload_version",
         "last_advisor_action_type",
+        "advisor_session_start",
+        "advisor_session_topics",
+        "advisor_actions_taken",
     ):
         context.user_data.pop(key, None)
 
@@ -887,6 +906,9 @@ async def _enter_advisor_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["mode"] = "advisor"
     context.user_data["advisor_history"] = []
     context.user_data["advisor_last_active"] = _time_now()
+    context.user_data["advisor_session_start"] = _time_now()
+    context.user_data["advisor_session_topics"] = []
+    context.user_data["advisor_actions_taken"] = []
     await update.effective_message.reply_text(
         _ADVISOR_ONBOARDING,
         reply_markup=advisor_onboarding_keyboard(),
@@ -1744,6 +1766,9 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop("pending_recurring", None)
         context.user_data.pop("advisor_history", None)
         context.user_data.pop("advisor_last_active", None)
+        context.user_data.pop("advisor_session_topics", None)
+        context.user_data.pop("advisor_actions_taken", None)
+        context.user_data.pop("advisor_session_start", None)
 
     try:
         with SessionLocal() as db:
@@ -1915,6 +1940,13 @@ async def advisor_followup_callback_handler(update: Update, context: ContextType
         text = f"📊 Детальный разбор категории{' «' + category + '»' if category else ''} — скоро будет доступен."
     else:
         text = _FOLLOWUP_MESSAGES.get(action, "Эта функция скоро будет доступна.")
+
+    # Track which follow-up actions the user has taken in this session
+    if context.user_data is not None:
+        actions_taken: list[str] = list(context.user_data.get("advisor_actions_taken", []))
+        if action not in actions_taken:
+            actions_taken.append(action)
+        context.user_data["advisor_actions_taken"] = actions_taken[-16:]
 
     try:
         await query.edit_message_text(text, reply_markup=None)
