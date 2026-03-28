@@ -1,5 +1,9 @@
+from app.services.recommendation_service import RecommendationItem, RecommendationSnapshot
+from datetime import UTC, datetime
+
 from app.telegram.keyboards import (
     ADVISOR_QUICK_SCENARIOS,
+    advisor_action_rows,
     advisor_keyboard,
     advisor_onboarding_keyboard,
     advisor_session_keyboard,
@@ -63,3 +67,36 @@ def test_cancel_keyboard():
     assert len(buttons[0]) == 1
     assert buttons[0][0].text == "❌ Отмена"
     assert buttons[0][0].callback_data == "nav:settings"
+
+
+def test_advisor_action_rows_map_recommendations_to_real_navigation() -> None:
+    recs = RecommendationSnapshot(
+        primary=RecommendationItem(
+            title="Срочно охлади категорию",
+            detail="Уже потрачено 112%",
+            score=0.9,
+            action_type="cut_costs",
+            category="еда",
+        ),
+        secondary=[
+            RecommendationItem(
+                title="Подготовь платёж",
+                detail="Налог скоро",
+                score=0.6,
+                action_type="upcoming_payment",
+            ),
+            RecommendationItem(
+                title="Смотри сводку",
+                detail="Прогноз выше бюджета",
+                score=0.55,
+                action_type="forecast_control",
+            ),
+        ],
+        generated_at=datetime.now(UTC),
+        data_quality="full",
+    )
+
+    rows = advisor_action_rows(recs)
+    assert rows[0][0].text == "💰 Открыть бюджеты"
+    assert rows[0][0].callback_data == "nav:budgets"
+    assert any(button.callback_data == "nav:planned" for row in rows for button in row)

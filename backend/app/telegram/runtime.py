@@ -746,9 +746,9 @@ async def _answer_advisor_question(
             history = history[2:]
         context.user_data["advisor_history"] = history
         context.user_data["advisor_last_active"] = _time_now()
-        reply_markup = advisor_session_keyboard()
+        reply_markup = advisor_session_keyboard(payload.recommendation_snapshot)
     else:
-        reply_markup = advisor_keyboard()
+        reply_markup = advisor_keyboard(payload.recommendation_snapshot)
 
     if use_edit:
         try:

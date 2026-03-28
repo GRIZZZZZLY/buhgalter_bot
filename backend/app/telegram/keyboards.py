@@ -1,5 +1,6 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
+from app.services.recommendation_service import RecommendationSnapshot
 from app.telegram.formatter import TreasuryFormatter
 
 formatter = TreasuryFormatter()
@@ -68,17 +69,52 @@ def _advisor_scenario_btn(slug: str, text: str) -> InlineKeyboardButton:
     return _btn(text, f"advisor:scenario:{slug}")
 
 
-def advisor_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard for one-off QA responses: [🧠 Продолжить в советнике] [≡ Меню]."""
-    return InlineKeyboardMarkup([
+def _advisor_action_target(action_type: str | None) -> tuple[str, str] | None:
+    mapping = {
+        "cut_costs": ("💰 Открыть бюджеты", "nav:budgets"),
+        "budget_check": ("💰 Открыть бюджеты", "nav:budgets"),
+        "upcoming_payment": ("📋 Открыть планы", "nav:planned"),
+        "forecast_control": ("📊 Открыть сводку", "nav:stats"),
+        "top_category_pressure": ("📊 Открыть сводку", "nav:stats"),
+    }
+    return mapping.get(action_type)
+
+
+def advisor_action_rows(recommendations: RecommendationSnapshot | None) -> list[list[InlineKeyboardButton]]:
+    if recommendations is None:
+        return []
+    seen: set[str] = set()
+    rows: list[list[InlineKeyboardButton]] = []
+    items = []
+    if recommendations.primary is not None:
+        items.append(recommendations.primary)
+    items.extend(recommendations.secondary[:2])
+    for item in items:
+        target = _advisor_action_target(item.action_type)
+        if not target:
+            continue
+        label, callback = target
+        if callback in seen:
+            continue
+        seen.add(callback)
+        rows.append([_btn(label, callback)])
+    return rows[:2]
+
+
+def advisor_keyboard(recommendations: RecommendationSnapshot | None = None) -> InlineKeyboardMarkup:
+    """Keyboard for one-off QA responses plus recommendation action buttons."""
+    rows = advisor_action_rows(recommendations)
+    rows.extend([
         [_btn("🧠 Продолжить в советнике", "nav:advisor")],
         [_btn("📊 Сводка", "nav:stats"), _menu_btn()],
     ])
+    return InlineKeyboardMarkup(rows)
 
 
-def advisor_session_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard after each advisor answer in dialog mode with quick follow-up scenarios."""
-    return InlineKeyboardMarkup([
+def advisor_session_keyboard(recommendations: RecommendationSnapshot | None = None) -> InlineKeyboardMarkup:
+    """Keyboard after each advisor answer in dialog mode with action buttons and quick follow-up scenarios."""
+    rows = advisor_action_rows(recommendations)
+    rows.extend([
         [
             _advisor_scenario_btn("budget_risks", "⚠️ Бюджеты"),
             _advisor_scenario_btn("upcoming", "📅 Скоро"),
@@ -94,6 +130,7 @@ def advisor_session_keyboard() -> InlineKeyboardMarkup:
         [_back_btn("nav:advisor"), _btn("✕ Завершить", "nav:menu")],
         [_menu_btn()],
     ])
+    return InlineKeyboardMarkup(rows)
 
 
 def advisor_onboarding_keyboard() -> InlineKeyboardMarkup:
@@ -332,6 +369,7 @@ def budgets_inline_keyboard() -> InlineKeyboardMarkup:
          _btn("🗂 По категории", "budget:pick_category")],
         [_menu_btn()],
     ])
+    return InlineKeyboardMarkup(rows)
 
 
 def budget_category_keyboard(categories: list[tuple[str, str]]) -> InlineKeyboardMarkup:
