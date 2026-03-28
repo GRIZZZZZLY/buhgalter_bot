@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.repositories.user_category_mapping_repository import UserCategoryMappingRepository
 from app.schemas.parser import ParseResult
+from app.services.advisor_intent_router import AdvisorIntentRouter
 from app.services.financial_qa_service import FinancialQAService
 from app.services.input_guard import InputGuard
 from app.services.llm_service import LLMService, LLMUnavailableError
@@ -390,14 +391,7 @@ class TelegramTextFlow:
 
     @staticmethod
     def _looks_like_question(text: str) -> bool:
-        t = text.lower().strip()
-        if t.endswith("?"):
-            return True
-        question_starts = (
-            "сколько", "почему", "когда", "как ", "можно ", "стоит ",
-            "могу ", "могла ", "хватит ", "достаточно ", "покажи ", "расскажи ",
-        )
-        return any(t.startswith(w) for w in question_starts)
+        return AdvisorIntentRouter().looks_like_advisor_question(text)
 
     @staticmethod
     def _signed(value: str) -> str:

@@ -67,13 +67,22 @@ _ADVISOR_TIMEOUT = 600  # 10 minutes
 
 _ADVISOR_ONBOARDING = (
     "🧠 *Финансовый советник*\n\n"
-    "Задай любой вопрос о своих финансах. Например:\n"
+    "Задай любой вопрос о своих финансах или выбери готовый сценарий ниже. Например:\n"
     "• Сколько я трачу на еду в месяц?\n"
     "• Укладываюсь ли я в бюджеты?\n"
     "• Какие крупные платежи скоро?\n"
     "• Как изменились мои расходы за 3 месяца?\n\n"
-    "Напиши вопрос текстом или голосом 👇"
+    "Можно писать текстом или голосом 👇"
 )
+
+_ADVISOR_SCENARIO_QUESTIONS = {
+    "top_expenses": "Покажи топ расходов за этот месяц и на что уходит больше всего денег.",
+    "budget_risks": "Где я уже вылезаю из бюджета и по каким категориям риск перерасхода?",
+    "upcoming": "Какие платежи и плановые траты у меня скоро?",
+    "trends_3m": "Покажи динамику расходов за 3 месяца и что изменилось.",
+    "cut_costs": "Что сейчас разумнее всего сократить по моим расходам?",
+    "export": "EXPORT_PLACEHOLDER",
+}
 
 LOG_PATH = Path(__file__).resolve().parents[2] / "runtime" / "logs" / "telegram-bot.log"
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -579,6 +588,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(catfix_callback_handler,  pattern=r"^catfix:"))
     application.add_handler(CallbackQueryHandler(categories_callback_handler, pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
+    application.add_handler(CallbackQueryHandler(advisor_callback_handler, pattern=r"^advisor:"))
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
     application.add_handler(CallbackQueryHandler(reset_callback_handler,   pattern=r"^reset:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
@@ -638,30 +648,70 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.effective_message.reply_text(response["message"], reply_markup=done_keyboard())
 
 
-async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    question = " ".join(context.args).strip() if context.args else ""
-    if not question:
-        # Enter advisor mode
-        context.user_data["mode"] = "advisor"
-        context.user_data["advisor_history"] = []
-        context.user_data["advisor_last_active"] = _time_now()
-        from app.telegram.keyboards import advisor_onboarding_keyboard
-        await update.effective_message.reply_text(
-            _ADVISOR_ONBOARDING,
-            reply_markup=advisor_onboarding_keyboard(),
-            parse_mode="Markdown",
-        )
+async def _answer_advisor_question(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    question: str,
+    *,
+    dialog_mode: bool,
+) -> None:
+    from app.telegram.keyboards import advisor_keyboard, advisor_session_keyboard
+
+    message = update.effective_message
+    if message is None:
         return
-    # Direct question — answer immediately (one-off, no dialog mode)
-    placeholder = await update.effective_message.reply_text("🤔 Анализирую…")
+
+    if dialog_mode:
+        last_active = context.user_data.get("advisor_last_active", 0)
+        if (_time_now() - last_active) > _ADVISOR_TIMEOUT:
+            context.user_data["advisor_history"] = []
+        history: list[dict] = list(context.user_data.get("advisor_history", []))
+    else:
+        history = []
+
+    placeholder = await message.reply_text("🤔 Анализирую…")
     with SessionLocal() as db:
         _ensure_user(db, update)
-        answer = FinancialQAService(db).answer(question, update.effective_user.id)
+        answer = FinancialQAService(db).answer(question, update.effective_user.id, history=history)
+
     try:
         await placeholder.delete()
     except Exception:
         pass
-    await update.effective_message.reply_text(answer, reply_markup=advisor_keyboard())
+
+    if dialog_mode:
+        history.append({"role": "user", "content": question})
+        history.append({"role": "assistant", "content": answer})
+        if len(history) > 10:
+            history = history[2:]
+        context.user_data["advisor_history"] = history
+        context.user_data["advisor_last_active"] = _time_now()
+        reply_markup = advisor_session_keyboard()
+    else:
+        reply_markup = advisor_keyboard()
+
+    await message.reply_text(answer, reply_markup=reply_markup)
+
+
+async def _enter_advisor_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.telegram.keyboards import advisor_onboarding_keyboard
+
+    context.user_data["mode"] = "advisor"
+    context.user_data["advisor_history"] = []
+    context.user_data["advisor_last_active"] = _time_now()
+    await update.effective_message.reply_text(
+        _ADVISOR_ONBOARDING,
+        reply_markup=advisor_onboarding_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    question = " ".join(context.args).strip() if context.args else ""
+    if not question:
+        await _enter_advisor_mode(update, context)
+        return
+    await _answer_advisor_question(update, context, question, dialog_mode=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1502,6 +1552,43 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as exc:
         logger.exception("nav_callback error section=%s: %s", section, exc)
         await update.effective_chat.send_message("❌ Ошибка при открытии раздела. Попробуй ещё раз.", reply_markup=done_keyboard())
+
+
+async def advisor_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.telegram.keyboards import done_keyboard
+
+    query = update.callback_query
+    if query is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    data = query.data or ""
+    if not data.startswith("advisor:scenario:"):
+        return
+
+    slug = data.removeprefix("advisor:scenario:")
+    if slug == "export":
+        await update.effective_message.reply_text(
+            "Пока экспорт доступен через /export month, /export week, /export today или /export all.",
+            reply_markup=done_keyboard(back_target="nav:advisor"),
+        )
+        return
+
+    question = _ADVISOR_SCENARIO_QUESTIONS.get(slug)
+    if not question:
+        await update.effective_message.reply_text(
+            "Не понял сценарий советника. Попробуй выбрать ещё раз.",
+            reply_markup=done_keyboard(back_target="nav:advisor"),
+        )
+        return
+
+    context.user_data["mode"] = "advisor"
+    context.user_data.setdefault("advisor_history", [])
+    context.user_data["advisor_last_active"] = _time_now()
+    await _answer_advisor_question(update, context, question, dialog_mode=True)
 
 
 async def planned_input_callback_handler(
@@ -2806,36 +2893,7 @@ async def _handle_budget_category_input(
 
 async def _handle_advisor_text(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     """Handle text input in advisor mode — route to FinancialQAService with history."""
-    from app.telegram.keyboards import advisor_session_keyboard
-
-    # Auto-clear stale history
-    last_active = context.user_data.get("advisor_last_active", 0)
-    if (_time_now() - last_active) > _ADVISOR_TIMEOUT:
-        context.user_data["advisor_history"] = []
-
-    history: list[dict] = context.user_data.get("advisor_history", [])
-
-    placeholder = await update.effective_message.reply_text("🤔 Анализирую…")
-
-    with SessionLocal() as db:
-        _ensure_user(db, update)
-        answer = FinancialQAService(db).answer(question, update.effective_user.id, history=history)
-
-    try:
-        await placeholder.delete()
-    except Exception:
-        pass
-
-    # Update history (cap at 5 pairs = 10 messages)
-    history = list(history)  # copy
-    history.append({"role": "user", "content": question})
-    history.append({"role": "assistant", "content": answer})
-    if len(history) > 10:
-        history = history[2:]
-    context.user_data["advisor_history"] = history
-    context.user_data["advisor_last_active"] = _time_now()
-
-    await update.effective_message.reply_text(answer, reply_markup=advisor_session_keyboard())
+    await _answer_advisor_question(update, context, question, dialog_mode=True)
 
 
 # ---------------------------------------------------------------------------

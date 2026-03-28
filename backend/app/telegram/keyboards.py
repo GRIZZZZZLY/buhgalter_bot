@@ -54,6 +54,20 @@ def done_keyboard(back_target: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[_menu_btn()]])
 
 
+ADVISOR_QUICK_SCENARIOS = [
+    ("top_expenses", "📊 Топ расходов"),
+    ("budget_risks", "⚠️ Где вылезаю из бюджета?"),
+    ("upcoming", "📅 Платежи скоро"),
+    ("trends_3m", "📈 Динамика за 3 месяца"),
+    ("cut_costs", "💡 Что сократить?"),
+    ("export", "📥 Скачать отчёт"),
+]
+
+
+def _advisor_scenario_btn(slug: str, text: str) -> InlineKeyboardButton:
+    return _btn(text, f"advisor:scenario:{slug}")
+
+
 def advisor_keyboard() -> InlineKeyboardMarkup:
     """Keyboard for one-off QA responses: [🧠 Продолжить в советнике] [≡ Меню]."""
     return InlineKeyboardMarkup([
@@ -63,13 +77,32 @@ def advisor_keyboard() -> InlineKeyboardMarkup:
 
 
 def advisor_session_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard after each advisor answer in dialog mode: [✕ Завершить]."""
-    return InlineKeyboardMarkup([[_btn("✕ Завершить", "nav:menu")]])
+    """Keyboard after each advisor answer in dialog mode with quick follow-up scenarios."""
+    return InlineKeyboardMarkup([
+        [
+            _advisor_scenario_btn("budget_risks", "⚠️ Бюджеты"),
+            _advisor_scenario_btn("upcoming", "📅 Скоро"),
+        ],
+        [
+            _advisor_scenario_btn("top_expenses", "📊 Топ"),
+            _advisor_scenario_btn("trends_3m", "📈 3 месяца"),
+        ],
+        [
+            _advisor_scenario_btn("cut_costs", "💡 Сократить"),
+            _advisor_scenario_btn("export", "📥 Отчёт"),
+        ],
+        [_btn("✕ Завершить", "nav:menu"), _menu_btn()],
+    ])
 
 
 def advisor_onboarding_keyboard() -> InlineKeyboardMarkup:
     """Keyboard for advisor onboarding screen."""
-    return InlineKeyboardMarkup([[_back_btn(), _menu_btn()]])
+    rows = []
+    for idx in range(0, len(ADVISOR_QUICK_SCENARIOS), 2):
+        pair = ADVISOR_QUICK_SCENARIOS[idx: idx + 2]
+        rows.append([_advisor_scenario_btn(slug, text) for slug, text in pair])
+    rows.append([_back_btn(), _menu_btn()])
+    return InlineKeyboardMarkup(rows)
 
 
 def cancel_keyboard(back_target: str) -> InlineKeyboardMarkup:

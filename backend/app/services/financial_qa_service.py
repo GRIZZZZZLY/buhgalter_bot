@@ -3,16 +3,14 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from decimal import Decimal
 
 from openai import APIError, OpenAI
 from sqlalchemy.orm import Session
 
 from app.core.settings import get_settings
-from app.repositories.category_budget_repository import CategoryBudgetRepository
-from app.repositories.planned_expense_repository import PlannedExpenseRepository
-from app.repositories.recurring_transaction_repository import RecurringTransactionRepository
-from app.repositories.transaction_repository import TransactionRepository
+from app.services.advisor_intent_router import AdvisorIntent, AdvisorIntentRouter
+from app.services.financial_snapshot_service import FinancialSnapshot, FinancialSnapshotService
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +27,19 @@ class FinancialQAService:
             timeout=60.0,
         )
         self._model = settings.llm_model
+        self._intent_router = AdvisorIntentRouter()
+        self._snapshot_service = FinancialSnapshotService(db)
 
     def answer(self, question: str, telegram_user_id: int, history: list[dict] | None = None) -> str:
         """Answer a financial question using the user's real transaction data."""
-        context = self._build_context(telegram_user_id)
+        route = self._intent_router.route(question)
+        snapshot = self._snapshot_service.build(telegram_user_id)
+        context = self._build_context(telegram_user_id, route.normalized_question)
         system = self._build_system_prompt(context)
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
         if history:
             messages.extend(history)
-        messages.append({"role": "user", "content": question})
+        messages.append({"role": "user", "content": route.normalized_question})
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
@@ -47,97 +49,59 @@ class FinancialQAService:
             )
             raw = response.choices[0].message.content or ""
             data = json.loads(raw)
-            return (data.get("answer") or "").strip() or _FALLBACK
+            answer = (data.get("answer") or "").strip()
+            return answer or self._fallback_answer(snapshot, route.intent)
         except APIError as exc:
             logger.error("FinancialQA LLM error: %s", exc)
-            return _FALLBACK
+            return self._fallback_answer(snapshot, route.intent)
         except Exception as exc:
             logger.error("FinancialQA unexpected error: %s", exc)
-            return _FALLBACK
+            return self._fallback_answer(snapshot, route.intent)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_context(self, telegram_user_id: int) -> str:
-        repo = TransactionRepository(self.db)
-        now = datetime.now()
-        today = now.strftime("%Y-%m-%d")
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    def _build_context(self, telegram_user_id: int, question: str | None = None) -> str:
+        route = self._intent_router.route(question or "")
+        snapshot = self._snapshot_service.build(telegram_user_id)
+        return self._render_context(snapshot, route.intent)
 
-        summary = repo.get_summary(telegram_user_id, period="month")
-        income = summary.get("income_total", 0)
-        expenses = summary.get("expense_total", 0)
-        balance = summary.get("balance", 0)
-
-        by_category: dict = repo.sum_expenses_by_category(telegram_user_id, start=month_start, end=now)
-        cat_lines = "\n".join(
-            f"  {cat}: {total:.2f}₽"
-            for cat, total in sorted(by_category.items(), key=lambda kv: kv[1], reverse=True)[:10]
-        ) or "  нет расходов"
-
-        recent = repo.list_for_user(telegram_user_id, limit=20, offset=0, period="month")
-        recent_lines = "\n".join(
-            f"  {tx.created_at.strftime('%d.%m')} {tx.type.value} {tx.amount}₽ [{tx.category}]"
-            + (f" — {tx.description}" if tx.description else "")
-            for tx in recent
-        ) or "  нет транзакций"
-
-        sections = [
-            f"Сегодня: {today}",
-            f"Баланс этого месяца: {balance:.2f}₽ "
-            f"(доходы {income:.2f}₽, расходы {expenses:.2f}₽)",
-            f"\nРасходы по категориям:\n{cat_lines}",
-            f"\nПоследние транзакции:\n{recent_lines}",
+    def _render_context(self, snapshot: FinancialSnapshot, intent: AdvisorIntent) -> str:
+        summary = snapshot.summary
+        sections: list[str] = [
+            f"Сегодня: {snapshot.today}",
+            (
+                f"Баланс этого месяца: {summary.balance:.2f}₽ "
+                f"(доходы {summary.income:.2f}₽, расходы {summary.expenses:.2f}₽)"
+            ),
         ]
 
-        # Monthly stats (3 months)
-        monthly = repo.monthly_summary(telegram_user_id, months=3)
-        if monthly:
-            monthly_lines = []
-            for m in monthly:
-                cat_str = ", ".join(
-                    f"{cat}: {amt:.0f}₽"
-                    for cat, amt in m["by_category"].items()
-                )
-                monthly_lines.append(
-                    f"  {m['year_month']}: доходы {m['income']:.0f}₽, расходы {m['expenses']:.0f}₽"
-                    + (f"\n    {cat_str}" if cat_str else "")
-                )
-            sections.append("\nПОМЕСЯЧНАЯ СТАТИСТИКА:\n" + "\n".join(monthly_lines))
+        always_recent = intent in {AdvisorIntent.RECENT, AdvisorIntent.ADVICE, AdvisorIntent.GENERAL}
+        always_categories = intent in {
+            AdvisorIntent.CATEGORY_SPEND,
+            AdvisorIntent.BUDGET_CHECK,
+            AdvisorIntent.ADVICE,
+            AdvisorIntent.GENERAL,
+        }
 
-        # Budgets
-        budget_repo = CategoryBudgetRepository(self.db)
-        budgets = budget_repo.get_all_for_user(telegram_user_id)
-        if budgets:
-            budget_lines = []
-            for b in budgets:
-                spent = float(by_category.get(b.category, 0))
-                limit_val = float(b.amount)
-                pct = int(spent / limit_val * 100) if limit_val > 0 else 0
-                warn = " ⚠️" if pct >= 90 else ""
-                budget_lines.append(f"  {b.category}: {limit_val:.0f}₽/мес, потрачено {spent:.0f}₽ ({pct}%){warn}")
-            sections.append("\nБЮДЖЕТЫ:\n" + "\n".join(budget_lines))
+        if always_categories or snapshot.top_categories:
+            sections.append("\nРасходы по категориям:\n" + self._render_categories(snapshot))
 
-        # Planned expenses
-        planned_repo = PlannedExpenseRepository(self.db)
-        planned = planned_repo.list_future_for_user(telegram_user_id)
-        if planned:
-            planned_lines = [
-                f"  {p.title}: {float(p.amount):.0f}₽, {p.planned_date}"
-                for p in planned[:10]
-            ]
-            sections.append("\nПЛАНОВЫЕ РАСХОДЫ:\n" + "\n".join(planned_lines))
+        if always_recent or snapshot.recent_transactions:
+            sections.append("\nПоследние транзакции:\n" + self._render_recent(snapshot))
 
-        # Recurring payments
-        recurring_repo = RecurringTransactionRepository(self.db)
-        recurring = recurring_repo.list_active(telegram_user_id)
-        if recurring:
-            recurring_lines = [
-                f"  {r.title}: {float(r.amount):.0f}₽/{r.frequency} ({r.transaction_type})"
-                for r in recurring
-            ]
-            sections.append("\nРЕГУЛЯРНЫЕ ПЛАТЕЖИ:\n" + "\n".join(recurring_lines))
+        if intent in {AdvisorIntent.TREND_ANALYSIS, AdvisorIntent.ADVICE, AdvisorIntent.GENERAL} and snapshot.monthly_stats:
+            sections.append("\nПОМЕСЯЧНАЯ СТАТИСТИКА:\n" + self._render_monthly(snapshot))
+
+        if intent in {AdvisorIntent.BUDGET_CHECK, AdvisorIntent.ADVICE, AdvisorIntent.GENERAL} and snapshot.budgets:
+            sections.append("\nБЮДЖЕТЫ:\n" + self._render_budgets(snapshot))
+
+        if intent in {AdvisorIntent.UPCOMING, AdvisorIntent.ADVICE, AdvisorIntent.GENERAL} and snapshot.planned_expenses:
+            sections.append("\nПЛАНОВЫЕ РАСХОДЫ:\n" + self._render_planned(snapshot))
+
+        if intent in {AdvisorIntent.UPCOMING, AdvisorIntent.ADVICE, AdvisorIntent.GENERAL} and snapshot.recurring_payments:
+            sections.append("\nРЕГУЛЯРНЫЕ ПЛАТЕЖИ:\n" + self._render_recurring(snapshot))
 
         return "\n".join(sections)
 
@@ -155,4 +119,124 @@ class FinancialQAService:
             'Верни JSON: {"answer": "ответ на русском"}\n'
             "Опирайся только на предоставленные данные. "
             "Если данных недостаточно для ответа — скажи об этом."
+        )
+
+    def _fallback_answer(self, snapshot: FinancialSnapshot, intent: AdvisorIntent) -> str:
+        if not snapshot.has_any_activity:
+            return "Пока у тебя мало финансовых данных. Сначала добавь несколько операций, и я смогу подсказать точнее."
+
+        summary = snapshot.summary
+
+        if intent == AdvisorIntent.BUDGET_CHECK and snapshot.budgets:
+            risky = [item for item in snapshot.budgets if item.warning]
+            if risky:
+                parts = ", ".join(
+                    f"{item.category} — {item.percent_used}% ({item.spent_amount:.0f}/{item.limit_amount:.0f}₽)"
+                    for item in risky[:3]
+                )
+                return f"По бюджетам уже есть риск перерасхода: {parts}. Если хочешь, могу отдельно разобрать, где урезать траты."
+            return "Пока бюджеты выглядят спокойно: критичных превышений не видно."
+
+        if intent == AdvisorIntent.UPCOMING:
+            upcoming_parts: list[str] = []
+            if snapshot.planned_expenses:
+                item = snapshot.planned_expenses[0]
+                upcoming_parts.append(f"ближайший плановый расход — {item.title} на {item.amount:.0f}₽ ({item.planned_date})")
+            if snapshot.recurring_payments:
+                item = snapshot.recurring_payments[0]
+                upcoming_parts.append(f"из регулярных платежей активен {item.title} на {item.amount:.0f}₽/{item.frequency}")
+            if upcoming_parts:
+                return "Сейчас по ближайшим обязательствам вижу: " + "; ".join(upcoming_parts) + "."
+            return "Сейчас у меня нет данных о ближайших плановых или регулярных платежах."
+
+        if intent == AdvisorIntent.TREND_ANALYSIS and snapshot.monthly_stats:
+            current = snapshot.monthly_stats[0]
+            previous = snapshot.monthly_stats[1] if len(snapshot.monthly_stats) > 1 else None
+            if previous:
+                delta = current.expenses - previous.expenses
+                trend = "выросли" if delta > 0 else "снизились"
+                return (
+                    f"В {current.year_month} расходы {trend}: {current.expenses:.0f}₽ против {previous.expenses:.0f}₽ "
+                    f"в {previous.year_month}."
+                )
+            return f"За последний доступный месяц у тебя расходы {current.expenses:.0f}₽ и доходы {current.income:.0f}₽."
+
+        if intent == AdvisorIntent.CATEGORY_SPEND and snapshot.top_categories:
+            top = snapshot.top_categories[0]
+            return f"Сейчас крупнейшая категория расходов — {top.category}: {top.amount:.0f}₽ за месяц."
+
+        if intent == AdvisorIntent.RECENT and snapshot.recent_transactions:
+            recent = snapshot.recent_transactions[0]
+            type_label = "доход" if recent.transaction_type == "income" else "расход"
+            answer = f"Последняя операция: {recent.date_label}, {type_label} {recent.amount:.0f}₽ в категории {recent.category}."
+            if recent.description:
+                answer += f" Комментарий: {recent.description}."
+            return answer
+
+        if intent == AdvisorIntent.ADVICE:
+            advice_bits: list[str] = []
+            if snapshot.top_categories:
+                top = snapshot.top_categories[0]
+                advice_bits.append(f"самая тяжёлая категория сейчас — {top.category} ({top.amount:.0f}₽)")
+            risky = [item for item in snapshot.budgets if item.warning]
+            if risky:
+                advice_bits.append(f"по бюджету уже горит {risky[0].category} ({risky[0].percent_used}%)")
+            if advice_bits:
+                return "Сейчас главный сигнал такой: " + "; ".join(advice_bits) + ". С этого и стоит начинать оптимизацию."
+
+        return (
+            f"Сейчас за месяц у тебя доходы {summary.income:.0f}₽, расходы {summary.expenses:.0f}₽, "
+            f"баланс {summary.balance:.0f}₽. Если хочешь, могу отдельно разобрать бюджеты, категории или ближайшие платежи."
+        )
+
+    @staticmethod
+    def _render_categories(snapshot: FinancialSnapshot) -> str:
+        return "\n".join(
+            f"  {item.category}: {item.amount:.2f}₽" for item in snapshot.top_categories
+        ) or "  нет расходов"
+
+    @staticmethod
+    def _render_recent(snapshot: FinancialSnapshot) -> str:
+        return "\n".join(
+            (
+                f"  {item.date_label} {item.transaction_type} {item.amount}₽ [{item.category}]"
+                + (f" — {item.description}" if item.description else "")
+            )
+            for item in snapshot.recent_transactions
+        ) or "  нет транзакций"
+
+    @staticmethod
+    def _render_monthly(snapshot: FinancialSnapshot) -> str:
+        lines: list[str] = []
+        for item in snapshot.monthly_stats:
+            cat_str = ", ".join(
+                f"{category}: {amount:.0f}₽" for category, amount in item.by_category.items()
+            )
+            lines.append(
+                f"  {item.year_month}: доходы {item.income:.0f}₽, расходы {item.expenses:.0f}₽"
+                + (f"\n    {cat_str}" if cat_str else "")
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_budgets(snapshot: FinancialSnapshot) -> str:
+        return "\n".join(
+            (
+                f"  {item.category}: {item.limit_amount:.0f}₽/мес, потрачено {item.spent_amount:.0f}₽ "
+                f"({item.percent_used}%)" + (" ⚠️" if item.warning else "")
+            )
+            for item in snapshot.budgets
+        )
+
+    @staticmethod
+    def _render_planned(snapshot: FinancialSnapshot) -> str:
+        return "\n".join(
+            f"  {item.title}: {item.amount:.0f}₽, {item.planned_date}" for item in snapshot.planned_expenses
+        )
+
+    @staticmethod
+    def _render_recurring(snapshot: FinancialSnapshot) -> str:
+        return "\n".join(
+            f"  {item.title}: {item.amount:.0f}₽/{item.frequency} ({item.transaction_type})"
+            for item in snapshot.recurring_payments
         )
