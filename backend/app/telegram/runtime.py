@@ -90,7 +90,7 @@ def _format_advisor_payload(
         if recommendations:
             primary = recommendations[0]
             # recommendations are plain strings; only use .title attr if it's not the built-in str method
-            title = primary.title if (hasattr(primary, "title") and not isinstance(primary, str)) else str(primary)
+            title = str(primary)
             parts.append(f"→ {title}")
         return "\n\n".join(p for p in parts if p)
 

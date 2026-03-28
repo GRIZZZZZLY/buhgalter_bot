@@ -95,14 +95,14 @@ class FinancialQAService:
             data = json.loads(raw)
             payload = self._payload_from_llm_data(data)
             if not payload.answer:
-                return self._fallback_payload(snapshot, analytics, recommendations, route.intent)
+                return self._fallback_payload(snapshot, analytics, recommendations, route.intent, mode)
             return self._with_computed_state(payload, snapshot, analytics, recommendations, mode)
         except APIError as exc:
             logger.error("FinancialQA LLM error: %s", exc)
-            return self._fallback_payload(snapshot, analytics, recommendations, route.intent)
+            return self._fallback_payload(snapshot, analytics, recommendations, route.intent, mode)
         except Exception as exc:
             logger.error("FinancialQA unexpected error: %s", exc)
-            return self._fallback_payload(snapshot, analytics, recommendations, route.intent)
+            return self._fallback_payload(snapshot, analytics, recommendations, route.intent, mode)
 
     def _with_computed_state(
         self,
@@ -244,6 +244,7 @@ class FinancialQAService:
         analytics: FinancialAnalyticsSnapshot,
         recommendations: RecommendationSnapshot,
         intent: AdvisorIntent,
+        mode: ResponseMode = ResponseMode.NORMAL,
     ) -> AdvisorAnswerPayload:
         if not snapshot.has_any_activity:
             return AdvisorAnswerPayload(
@@ -256,6 +257,7 @@ class FinancialQAService:
                 snapshot=snapshot,
                 analytics=analytics,
                 recommendation_snapshot=recommendations,
+                response_mode=mode,
             )
 
         summary = snapshot.summary
@@ -285,6 +287,7 @@ class FinancialQAService:
                     snapshot=snapshot,
                     analytics=analytics,
                     recommendation_snapshot=recommendations,
+                    response_mode=mode,
                 )
             return AdvisorAnswerPayload(
                 answer="Пока бюджеты выглядят спокойно: критичных превышений не видно.",
@@ -299,6 +302,7 @@ class FinancialQAService:
                 snapshot=snapshot,
                 analytics=analytics,
                 recommendation_snapshot=recommendations,
+                response_mode=mode,
             )
 
         if intent == AdvisorIntent.UPCOMING:
@@ -321,6 +325,7 @@ class FinancialQAService:
                     snapshot=snapshot,
                     analytics=analytics,
                     recommendation_snapshot=recommendations,
+                    response_mode=mode,
                 )
             return AdvisorAnswerPayload(
                 answer="Сейчас у меня нет данных о ближайших плановых или регулярных платежах.",
@@ -332,6 +337,7 @@ class FinancialQAService:
                 snapshot=snapshot,
                 analytics=analytics,
                 recommendation_snapshot=recommendations,
+                response_mode=mode,
             )
 
         if intent == AdvisorIntent.TREND_ANALYSIS and snapshot.monthly_stats:
@@ -357,6 +363,7 @@ class FinancialQAService:
                     snapshot=snapshot,
                     analytics=analytics,
                     recommendation_snapshot=recommendations,
+                    response_mode=mode,
                 )
             return AdvisorAnswerPayload(
                 answer=f"За последний доступный месяц у тебя расходы {current.expenses:.0f}₽ и доходы {current.income:.0f}₽.",
@@ -368,6 +375,7 @@ class FinancialQAService:
                 snapshot=snapshot,
                 analytics=analytics,
                 recommendation_snapshot=recommendations,
+                response_mode=mode,
             )
 
         if intent == AdvisorIntent.CATEGORY_SPEND and snapshot.top_categories:
@@ -383,6 +391,7 @@ class FinancialQAService:
                 snapshot=snapshot,
                 analytics=analytics,
                 recommendation_snapshot=recommendations,
+                response_mode=mode,
             )
 
         if intent == AdvisorIntent.RECENT and snapshot.recent_transactions:
@@ -401,6 +410,7 @@ class FinancialQAService:
                 snapshot=snapshot,
                 analytics=analytics,
                 recommendation_snapshot=recommendations,
+                response_mode=mode,
             )
 
         if intent == AdvisorIntent.ADVICE:
@@ -425,6 +435,7 @@ class FinancialQAService:
                 snapshot=snapshot,
                 analytics=analytics,
                 recommendation_snapshot=recommendations,
+                response_mode=mode,
             )
 
         basis = [
@@ -449,6 +460,7 @@ class FinancialQAService:
             snapshot=snapshot,
             analytics=analytics,
             recommendation_snapshot=recommendations,
+            response_mode=mode,
         )
 
     @staticmethod
@@ -464,22 +476,6 @@ class FinancialQAService:
         if analytics.primary_risk:
             lines.append(f"  Главный риск: {analytics.primary_risk.detail}")
         return "\n".join(lines)
-
-    @staticmethod
-    def _render_by_mode(payload: "AdvisorAnswerPayload", mode: ResponseMode) -> str:
-        if mode == ResponseMode.SHORT:
-            return payload.answer
-        if mode == ResponseMode.NORMAL:
-            parts = [payload.answer]
-            if payload.warnings:
-                parts.append("⚠️ " + " · ".join(payload.warnings[:2]))
-            if payload.recommendations:
-                primary = payload.recommendations[0]
-                title = primary.title if (hasattr(primary, "title") and not isinstance(primary, str)) else str(primary)
-                parts.append(f"→ {title}")
-            return "\n\n".join(parts)
-        # FULL: delegate to caller (_format_advisor_payload in runtime.py)
-        return payload.answer
 
     @staticmethod
     def _render_recommendations(recommendations: RecommendationSnapshot) -> list[str]:
