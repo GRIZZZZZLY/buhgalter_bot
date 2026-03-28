@@ -1192,7 +1192,31 @@ async def document_message_handler(update: Update, context: ContextTypes.DEFAULT
     telegram_file = await context.bot.get_file(message.document.file_id)
     content = bytes(await telegram_file.download_as_bytearray())
 
-    preview = ImportService().build_preview(filename=filename, content=content)
+    svc = ImportService()
+    preview = svc.build_preview(filename=filename, content=content)
+
+    if preview.ready_to_import and update.effective_user is not None:
+        from app.repositories.transaction_repository import TransactionRepository
+        from app.models.transaction import Transaction as TxModel
+        from sqlalchemy import select as sa_select
+        from datetime import datetime as dt_cls
+        user_id = update.effective_user.id
+        with SessionLocal() as db:
+            dates = [row.created_at for row in preview.importable_rows]
+            date_from = dt_cls.fromisoformat(min(dates))
+            date_to = dt_cls.fromisoformat(max(dates))
+            stmt = sa_select(TxModel).where(
+                TxModel.telegram_user_id == user_id,
+                TxModel.created_at >= date_from,
+                TxModel.created_at <= date_to,
+            )
+            existing_txs = list(db.scalars(stmt).all())
+            existing_keys = {
+                f"{t.created_at.date().isoformat()}:{t.amount:.2f}:{(t.description or '').lower().strip()}"
+                for t in existing_txs
+            }
+        preview = svc.apply_dedup(preview, existing_keys)
+
     if context.user_data is not None:
         context.user_data.pop("pending_import_rows", None)
         context.user_data.pop("pending_import_filename", None)
@@ -1206,7 +1230,7 @@ async def document_message_handler(update: Update, context: ContextTypes.DEFAULT
         pass
 
     await message.reply_text(
-        ImportService().render_preview_message(preview),
+        svc.render_preview_message(preview),
         reply_markup=_import_preview_keyboard(preview.ready_to_import),
     )
 

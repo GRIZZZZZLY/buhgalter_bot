@@ -36,6 +36,7 @@ class ImportPreview:
     importable_rows: list[ImportRowPreview]
     skipped_rows: list[str]
     warnings: list[str]
+    rows_skipped_duplicates: int = 0
 
     def to_pending_payload(self) -> list[dict[str, str | int | None]]:
         return [row.to_dict() for row in self.importable_rows]
@@ -49,6 +50,37 @@ class ImportService:
         self._reverse_categories = {
             value.lower(): key for key, value in self._formatter.CATEGORY_LABELS_RU.items()
         }
+
+    @staticmethod
+    def _dedup_key(created_at: str, amount: str, description: str | None) -> str:
+        desc = (description or "").lower().strip()
+        return f"{created_at}:{amount}:{desc}"
+
+    def apply_dedup(self, preview: ImportPreview, existing_keys: set[str]) -> ImportPreview:
+        """Return a new ImportPreview with duplicate rows removed from importable_rows."""
+        if not existing_keys:
+            return preview
+        to_import: list[ImportRowPreview] = []
+        dup_count = 0
+        for row in preview.importable_rows:
+            key = self._dedup_key(row.created_at, row.amount, row.description)
+            if key in existing_keys:
+                dup_count += 1
+            else:
+                to_import.append(row)
+        if dup_count == 0:
+            return preview
+        return ImportPreview(
+            filename=preview.filename,
+            detected_format=preview.detected_format,
+            supported=preview.supported,
+            ready_to_import=bool(to_import),
+            total_rows=preview.total_rows,
+            importable_rows=to_import,
+            skipped_rows=preview.skipped_rows,
+            warnings=preview.warnings,
+            rows_skipped_duplicates=dup_count,
+        )
 
     @staticmethod
     def detect_format(filename: str | None) -> str:
@@ -96,8 +128,10 @@ class ImportService:
             f"📥 Dry-run импорт: {preview.filename}",
             f"Формат: {preview.detected_format}",
             f"Всего строк: {preview.total_rows}",
-            f"Готово к импорту: {len(preview.importable_rows)}",
+            f"Будет импортировано: {len(preview.importable_rows)}",
         ]
+        if preview.rows_skipped_duplicates:
+            lines.append(f"Пропущено дублей: {preview.rows_skipped_duplicates} (уже есть в базе)")
         if preview.skipped_rows:
             lines.append(f"Пропущено: {len(preview.skipped_rows)}")
         if preview.importable_rows:

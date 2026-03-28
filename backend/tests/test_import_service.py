@@ -62,5 +62,5 @@ def test_render_preview_mentions_dry_run_and_counts() -> None:
     message = ImportService().render_preview_message(preview)
 
     assert "Dry-run импорт" in message
-    assert "Готово к импорту: 1" in message
+    assert "Будет импортировано: 1" in message
     assert "До этого в базу ничего не пишется" in message
