@@ -41,6 +41,7 @@ class RecommendationService:
         self,
         snapshot: FinancialSnapshot,
         analytics: FinancialAnalyticsSnapshot,
+        exclude_action_types: list[str] | None = None,
     ) -> RecommendationSnapshot:
         data_quality = self._assess_data_quality(snapshot)
         candidates: list[RecommendationItem] = []
@@ -48,6 +49,9 @@ class RecommendationService:
         candidates.extend(self._score_forecast_risk(snapshot, analytics))
         candidates.extend(self._score_upcoming_payments(snapshot, analytics))
         candidates.extend(self._score_top_category_pressure(snapshot))
+
+        if exclude_action_types:
+            candidates = [c for c in candidates if c.action_type not in exclude_action_types]
 
         sorted_items = sorted(candidates, key=lambda item: item.score, reverse=True)
         primary = sorted_items[0] if sorted_items else None

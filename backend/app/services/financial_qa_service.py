@@ -72,12 +72,13 @@ class FinancialQAService:
         question: str,
         telegram_user_id: int,
         history: list[dict] | None = None,
+        exclude_action_types: list[str] | None = None,
     ) -> AdvisorAnswerPayload:
         route = self._intent_router.route(question)
         mode = _INTENT_TO_MODE.get(route.intent, ResponseMode.NORMAL)
         snapshot = self._snapshot_service.build(telegram_user_id)
         analytics = self._analytics_service.build(snapshot)
-        recommendations = self._recommendation_service.build(snapshot, analytics)
+        recommendations = self._recommendation_service.build(snapshot, analytics, exclude_action_types=exclude_action_types)
         context = self._render_context(snapshot, analytics, route.intent)
         system = self._build_system_prompt(context, recommendations)
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]

@@ -72,6 +72,15 @@ def _time_now() -> float:
     return _time.time()
 
 _ADVISOR_TIMEOUT = 600  # 10 minutes
+_SHOWN_RECOMMENDATIONS_KEY = "shown_recommendation_types"
+_MAX_SESSION_RECOMMENDATIONS = 5
+
+
+def _track_shown_recommendation(context: ContextTypes.DEFAULT_TYPE, action_type: str) -> None:
+    shown: list[str] = list(context.user_data.get(_SHOWN_RECOMMENDATIONS_KEY, []))
+    if action_type not in shown:
+        shown.append(action_type)
+    context.user_data[_SHOWN_RECOMMENDATIONS_KEY] = shown[-_MAX_SESSION_RECOMMENDATIONS:]
 
 
 def _format_advisor_payload(
@@ -768,9 +777,15 @@ async def _answer_advisor_question(
     if not use_edit:
         placeholder = await message.reply_text("🤔 Анализирую…")
 
+    exclude_types: list[str] = list(context.user_data.get(_SHOWN_RECOMMENDATIONS_KEY, []))
     with SessionLocal() as db:
         _ensure_user(db, update)
-        payload = FinancialQAService(db).answer_payload(question, update.effective_user.id, history=history)
+        payload = FinancialQAService(db).answer_payload(
+            question,
+            update.effective_user.id,
+            history=history,
+            exclude_action_types=exclude_types or None,
+        )
 
     answer = _format_advisor_payload(
         payload.answer,
@@ -788,6 +803,8 @@ async def _answer_advisor_question(
     context.user_data["last_advisor_payload_version"] = payload.payload_version
     primary = payload.recommendation_snapshot.primary if payload.recommendation_snapshot else None
     context.user_data["last_advisor_action_type"] = primary.action_type if primary else None
+    if primary:
+        _track_shown_recommendation(context, primary.action_type)
     logger.info(
         "advisor state updated: version=%s action_type=%s fresh=%s",
         payload.payload_version,
