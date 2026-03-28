@@ -65,6 +65,18 @@ def _time_now() -> float:
 
 _ADVISOR_TIMEOUT = 600  # 10 minutes
 
+
+def _format_advisor_payload(answer: str, basis: list[str] | None = None, warnings: list[str] | None = None, confidence: str | None = None) -> str:
+    parts = [answer.strip()]
+    if basis:
+        parts.append("\nОснова:\n" + "\n".join(f"• {item}" for item in basis[:3]))
+    if warnings:
+        parts.append("\nРиски / ограничения:\n" + "\n".join(f"• {item}" for item in warnings[:3]))
+    if confidence:
+        conf_map = {"low": "низкая", "medium": "средняя", "high": "высокая"}
+        parts.append(f"\nУверенность: {conf_map.get(confidence, confidence)}")
+    return "\n".join(part for part in parts if part)
+
 _ADVISOR_ONBOARDING = (
     "🧠 *Финансовый советник*\n\n"
     "Задай любой вопрос о своих финансах или выбери готовый сценарий ниже. Например:\n"
@@ -672,7 +684,14 @@ async def _answer_advisor_question(
     placeholder = await message.reply_text("🤔 Анализирую…")
     with SessionLocal() as db:
         _ensure_user(db, update)
-        answer = FinancialQAService(db).answer(question, update.effective_user.id, history=history)
+        payload = FinancialQAService(db).answer_payload(question, update.effective_user.id, history=history)
+
+    answer = _format_advisor_payload(
+        payload.answer,
+        basis=payload.basis,
+        warnings=payload.warnings,
+        confidence=payload.confidence,
+    )
 
     try:
         await placeholder.delete()

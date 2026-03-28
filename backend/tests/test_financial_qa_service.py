@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.financial_qa_service import FinancialQAService
+from app.services.financial_qa_service import AdvisorAnswerPayload, FinancialQAService
 
 
 def test_financial_qa_returns_string(db_session) -> None:
@@ -114,3 +114,20 @@ def test_financial_qa_passes_history_to_llm(db_session) -> None:
     assert captured_messages[1]["content"] == "сколько я потратил?"
     assert captured_messages[2]["content"] == "5000₽ за этот месяц."
     assert captured_messages[3]["content"] == "а на еду?"
+
+
+def test_financial_qa_returns_structured_payload(db_session) -> None:
+    service = FinancialQAService(db_session)
+    fake_response = MagicMock()
+    fake_response.choices[0].message.content = (
+        '{"answer":"Нормально.","basis":["Расходы 1000₽"],"warnings":["Бюджет близко"],"confidence":"high"}'
+    )
+
+    with patch.object(service._client.chat.completions, "create", return_value=fake_response):
+        payload = service.answer_payload("что по бюджету?", telegram_user_id=555)
+
+    assert isinstance(payload, AdvisorAnswerPayload)
+    assert payload.answer == "Нормально."
+    assert payload.basis == ["Расходы 1000₽"]
+    assert payload.warnings == ["Бюджет близко"]
+    assert payload.confidence == "high"
