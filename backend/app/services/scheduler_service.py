@@ -268,21 +268,29 @@ class SchedulerService:
     # Planned expenses: same-day reminders
     # ------------------------------------------------------------------
     async def _check_planned_expense_reminders(self) -> None:
-        """Send morning reminder for planned expenses due today."""
+        """Send reminder for planned expenses due today.
+
+        Items with an explicit reminder_time fire at that time;
+        items without one fire at the user's morning reminder time.
+        """
         try:
             with SessionLocal() as db:
-                user_repo = UserRepository(db)
-                users = user_repo.get_all_with_morning_reminder()
+                from sqlalchemy import select
+                from app.models.user import User as UserModel
+
+                users = list(db.scalars(select(UserModel)).all())
                 planned_service = PlannedExpenseService(db)
 
                 for user in users:
-                    if not self._is_time_to_send(user, user.reminder_morning):
-                        continue
                     due_items = planned_service.list_due_today(date.today(), user.telegram_user_id)
+                    today_str = date.today().isoformat()
                     for item in due_items:
                         raw = planned_service.repo.get(user.telegram_user_id, item.id)
-                        today_str = date.today().isoformat()
                         if raw is None or raw.reminder_sent_date == today_str:
+                            continue
+                        # Use item-specific reminder_time if set, else user's morning time
+                        fire_time = raw.reminder_time if raw.reminder_time else user.reminder_morning
+                        if not self._is_time_to_send(user, fire_time):
                             continue
                         msg = formatter.format_planned_due(item.title, item.amount, item.category, item.planned_date)
                         kb = planned_expense_due_keyboard(item.id)

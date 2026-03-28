@@ -45,7 +45,28 @@ class LLMAdvisorResult:
     answer: str
 
 
-LLMResult = LLMTransactionResult | LLMAdvisorResult
+@dataclass
+class LLMPlannedResult:
+    intent: Literal["planned"]
+    title: str
+    amount: Decimal
+    category: str
+    planned_date: date | None  # None → завтра по умолчанию
+    reminder_time: str | None  # "HH:MM" или None
+
+
+@dataclass
+class LLMRecurringResult:
+    intent: Literal["recurring"]
+    title: str
+    amount: Decimal
+    transaction_type: Literal["expense", "income"]
+    category: str
+    frequency: Literal["monthly", "weekly", "daily", "interval_days"]
+    day_value: int
+
+
+LLMResult = LLMTransactionResult | LLMAdvisorResult | LLMPlannedResult | LLMRecurringResult
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +217,12 @@ class LLMService:
             items = [self._parse_item(item, original_text) for item in raw_items]
             return LLMTransactionResult(intent="transaction", items=items)
 
+        if intent == "planned":
+            return self._parse_planned(data)
+
+        if intent == "recurring":
+            return self._parse_recurring(data)
+
         raise LLMUnavailableError(f"unknown intent: {intent!r}")
 
     def _parse_item(self, item: dict, original_text: str) -> LLMParsedItem:
@@ -233,6 +260,68 @@ class LLMService:
         )
         return LLMParsedItem(parsed=parsed, override_date=override_date)
 
+    def _parse_planned(self, data: dict) -> LLMPlannedResult:
+        try:
+            amount = Decimal(str(data["amount"]))
+        except (KeyError, InvalidOperation) as exc:
+            raise LLMUnavailableError(f"planned: invalid amount {data.get('amount')!r}") from exc
+
+        category = data.get("category") or "other"
+        if category not in self._valid_slugs:
+            category = "other"
+
+        planned_date: date | None = None
+        raw_date = data.get("planned_date")
+        if raw_date:
+            try:
+                planned_date = date.fromisoformat(raw_date)
+            except (ValueError, TypeError):
+                planned_date = None
+
+        reminder_time = data.get("reminder_time") or None
+
+        return LLMPlannedResult(
+            intent="planned",
+            title=str(data.get("title") or "Платёж"),
+            amount=amount,
+            category=category,
+            planned_date=planned_date,
+            reminder_time=reminder_time,
+        )
+
+    def _parse_recurring(self, data: dict) -> LLMRecurringResult:
+        try:
+            amount = Decimal(str(data["amount"]))
+        except (KeyError, InvalidOperation) as exc:
+            raise LLMUnavailableError(f"recurring: invalid amount {data.get('amount')!r}") from exc
+
+        category = data.get("category") or "other"
+        if category not in self._valid_slugs:
+            category = "other"
+
+        tx_type = data.get("transaction_type", "expense")
+        if tx_type not in ("income", "expense"):
+            tx_type = "expense"
+
+        frequency = data.get("frequency", "monthly")
+        if frequency not in ("monthly", "weekly", "daily", "interval_days"):
+            frequency = "monthly"
+
+        try:
+            day_value = int(data.get("day_value") or 1)
+        except (ValueError, TypeError):
+            day_value = 1
+
+        return LLMRecurringResult(
+            intent="recurring",
+            title=str(data.get("title") or "Платёж"),
+            amount=amount,
+            transaction_type=tx_type,
+            category=category,
+            frequency=frequency,
+            day_value=day_value,
+        )
+
     def _build_system_prompt(self) -> str:
         categories = self._categories_config["ru"]["categories"]
         category_lines = "\n".join(
@@ -240,15 +329,29 @@ class LLMService:
             for cat in categories
         )
         today = datetime.now().strftime("%Y-%m-%d")
+        tomorrow = (datetime.now().date() + __import__("datetime").timedelta(days=1)).isoformat()
 
         return (
-            f"Ты финансовый ассистент для личного бюджета. Сегодня {today}.\n\n"
+            f"Ты финансовый ассистент для личного бюджета. Сегодня {today}, завтра {tomorrow}.\n\n"
             f"КАТЕГОРИИ (используй только эти slug):\n{category_lines}\n\n"
-            "Верни JSON строго одного из двух форматов:\n"
-            '1. Транзакция: {"intent":"transaction","items":[{"type":"expense"|"income",'
-            '"amount":число,"category":"slug из списка","description":"строка или null","date":"YYYY-MM-DD или null"}]}\n'
-            '2. Вопрос: {"intent":"advisor","answer":"ответ на русском языке"}\n\n'
-            "Правила: только валидный JSON без markdown-обёртки; "
-            "category ТОЛЬКО из списка выше; date=null если речь идёт о сегодня; "
-            "если сумма не указана — это advisor, не transaction."
+            "Верни JSON строго одного из четырёх форматов:\n"
+            '1. Транзакция (уже произошла): {"intent":"transaction","items":[{"type":"expense"|"income",'
+            '"amount":число,"category":"slug","description":"строка или null","date":"YYYY-MM-DD или null"}]}\n'
+            '2. Вопрос/совет: {"intent":"advisor","answer":"ответ на русском языке"}\n'
+            '3. Запланированный платёж (в будущем, напомни, не забудь): {"intent":"planned",'
+            '"title":"название","amount":число,"category":"slug",'
+            '"planned_date":"YYYY-MM-DD или null","reminder_time":"HH:MM или null"}\n'
+            '4. Регулярный платёж (каждый месяц/неделю/день): {"intent":"recurring",'
+            '"title":"название","amount":число,"transaction_type":"expense"|"income",'
+            '"category":"slug","frequency":"monthly"|"weekly"|"daily"|"interval_days","day_value":число}\n\n'
+            "Правила:\n"
+            "- Только валидный JSON без markdown-обёртки\n"
+            "- category ТОЛЬКО из списка выше\n"
+            "- date=null если речь идёт о сегодня (для transaction)\n"
+            "- Если сумма не указана — это advisor\n"
+            '- Ключевые слова для planned: "напомни", "не забудь", "заплатить потом", "запланируй", "поставь напоминание"\n'
+            '- Ключевые слова для recurring: "каждый месяц", "ежемесячно", "каждую неделю", "регулярно", "каждый день"\n'
+            '- reminder_time: "утром"=09:00, "днём"=13:00, "вечером"=19:00, "ночью"=22:00; null если не упомянуто\n'
+            "- planned_date: вычисли будущую дату из контекста (завтра, в пятницу, 1 апреля и т.д.); null если не упомянута\n"
+            "- Для recurring monthly: day_value = день месяца (1-28); weekly: day_value = 0(пн)..6(вс); interval_days/daily: day_value = число дней"
         )

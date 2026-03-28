@@ -40,6 +40,7 @@ class PlannedExpenseService:
         amount: float,
         category: str,
         planned_date: date,
+        reminder_time: str | None = None,
     ) -> PlannedExpenseItem:
         item = self.repo.create(
             telegram_user_id=telegram_user_id,
@@ -48,6 +49,7 @@ class PlannedExpenseService:
             category=category,
             planned_date=planned_date,
             source="manual",
+            reminder_time=reminder_time,
         )
         self.db.commit()
         return self._to_item(item)

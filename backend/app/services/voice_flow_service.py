@@ -10,7 +10,10 @@ from app.services.transaction_service import TransactionService
 from app.services.stt_service import STTService
 from app.services.transcript_postprocessor import TranscriptPostprocessor
 from app.telegram.formatter import TreasuryFormatter
-from app.services.llm_service import LLMService, LLMParsedItem, LLMTransactionResult, LLMUnavailableError
+from app.services.llm_service import (
+    LLMService, LLMParsedItem, LLMTransactionResult,
+    LLMPlannedResult, LLMRecurringResult, LLMUnavailableError,
+)
 
 
 class VoiceFlowService:
@@ -29,12 +32,16 @@ class VoiceFlowService:
         self.formatter = TreasuryFormatter()
         self.llm_service = LLMService(db)
 
-    def _llm_parse(self, text: str, telegram_user_id: int) -> list[LLMParsedItem] | None:
-        """Call LLM and return items, or None on failure."""
+    def _llm_call(self, text: str, telegram_user_id: int):
+        """Call LLM and return full result, or None on failure."""
         try:
-            result = self.llm_service.process(text, telegram_user_id)
+            return self.llm_service.process(text, telegram_user_id)
         except LLMUnavailableError:
             return None
+
+    def _llm_parse(self, text: str, telegram_user_id: int) -> list[LLMParsedItem] | None:
+        """Call LLM and return transaction items only, or None on non-transaction result."""
+        result = self._llm_call(text, telegram_user_id)
         if not isinstance(result, LLMTransactionResult):
             return None
         return result.items
@@ -68,8 +75,9 @@ class VoiceFlowService:
             )
 
         normalized_transcript = self.postprocessor.normalize(stt_result.text)
-        llm_items = self._llm_parse(normalized_transcript, telegram_user_id)
-        if not llm_items:
+        llm_result = self._llm_call(normalized_transcript, telegram_user_id)
+
+        if llm_result is None:
             log = self.voice_logs.create_pending(
                 telegram_user_id=telegram_user_id,
                 telegram_message_id=telegram_message_id,
@@ -88,7 +96,79 @@ class VoiceFlowService:
                 message="Не удалось распознать. Попробуй текстом.",
             )
 
-        parsed_results = [item.parsed for item in llm_items]
+        # --- planned / recurring intents ---
+        if isinstance(llm_result, LLMPlannedResult):
+            log = self.voice_logs.create_pending(
+                telegram_user_id=telegram_user_id,
+                telegram_message_id=telegram_message_id,
+                file_id=file_id,
+                original_text=original_text,
+                transcript_text=normalized_transcript,
+                parser_confidence=0.95,
+                parser_status="planned",
+                status=VoiceLogStatus.PENDING,
+            )
+            return VoiceConfirmationResult(
+                action="planned_confirm",
+                voice_log_id=log.id,
+                transcript=normalized_transcript,
+                message="",
+                parsed_items=[{
+                    "title": llm_result.title,
+                    "amount": str(llm_result.amount),
+                    "category": llm_result.category,
+                    "planned_date": llm_result.planned_date.isoformat() if llm_result.planned_date else "",
+                    "reminder_time": llm_result.reminder_time or "",
+                }],
+            )
+
+        if isinstance(llm_result, LLMRecurringResult):
+            log = self.voice_logs.create_pending(
+                telegram_user_id=telegram_user_id,
+                telegram_message_id=telegram_message_id,
+                file_id=file_id,
+                original_text=original_text,
+                transcript_text=normalized_transcript,
+                parser_confidence=0.95,
+                parser_status="recurring",
+                status=VoiceLogStatus.PENDING,
+            )
+            return VoiceConfirmationResult(
+                action="recurring_confirm",
+                voice_log_id=log.id,
+                transcript=normalized_transcript,
+                message="",
+                parsed_items=[{
+                    "title": llm_result.title,
+                    "amount": str(llm_result.amount),
+                    "category": llm_result.category,
+                    "transaction_type": llm_result.transaction_type,
+                    "frequency": llm_result.frequency,
+                    "day_value": str(llm_result.day_value),
+                }],
+            )
+
+        # --- transaction intent ---
+        if not isinstance(llm_result, LLMTransactionResult) or not llm_result.items:
+            log = self.voice_logs.create_pending(
+                telegram_user_id=telegram_user_id,
+                telegram_message_id=telegram_message_id,
+                file_id=file_id,
+                original_text=original_text,
+                transcript_text=normalized_transcript,
+                parser_confidence=0.0,
+                parser_status="fallback",
+                status=VoiceLogStatus.FAILED,
+                failure_reason="no transaction items",
+            )
+            return VoiceConfirmationResult(
+                action="voice_fallback",
+                voice_log_id=log.id,
+                transcript=normalized_transcript,
+                message="Не удалось распознать. Попробуй текстом.",
+            )
+
+        parsed_results = [item.parsed for item in llm_result.items]
 
         log = self.voice_logs.create_pending(
             telegram_user_id=telegram_user_id,
@@ -141,8 +221,42 @@ class VoiceFlowService:
             return None
 
         normalized = self.postprocessor.normalize(edited_text)
-        llm_items = self._llm_parse(normalized, log.telegram_user_id)
-        if not llm_items:
+        llm_result = self._llm_call(normalized, log.telegram_user_id)
+
+        if isinstance(llm_result, LLMPlannedResult):
+            self.voice_logs.update_transcript(log.id, normalized, parser_status="edited_planned")
+            return VoiceConfirmationResult(
+                action="planned_confirm",
+                voice_log_id=log.id,
+                transcript=normalized,
+                message="",
+                parsed_items=[{
+                    "title": llm_result.title,
+                    "amount": str(llm_result.amount),
+                    "category": llm_result.category,
+                    "planned_date": llm_result.planned_date.isoformat() if llm_result.planned_date else "",
+                    "reminder_time": llm_result.reminder_time or "",
+                }],
+            )
+
+        if isinstance(llm_result, LLMRecurringResult):
+            self.voice_logs.update_transcript(log.id, normalized, parser_status="edited_recurring")
+            return VoiceConfirmationResult(
+                action="recurring_confirm",
+                voice_log_id=log.id,
+                transcript=normalized,
+                message="",
+                parsed_items=[{
+                    "title": llm_result.title,
+                    "amount": str(llm_result.amount),
+                    "category": llm_result.category,
+                    "transaction_type": llm_result.transaction_type,
+                    "frequency": llm_result.frequency,
+                    "day_value": str(llm_result.day_value),
+                }],
+            )
+
+        if not isinstance(llm_result, LLMTransactionResult) or not llm_result.items:
             self.voice_logs.update_transcript(log.id, normalized, parser_status="edited_failed")
             return VoiceConfirmationResult(
                 action="voice_edit_required",
@@ -152,7 +266,7 @@ class VoiceFlowService:
             )
 
         self.voice_logs.update_transcript(log.id, normalized, parser_status="edited")
-        parsed_items = [self._item_preview(item.parsed) for item in llm_items]
+        parsed_items = [self._item_preview(item.parsed) for item in llm_result.items]
         if len(parsed_items) == 1:
             item = parsed_items[0]
             message = self.formatter.format_voice_confirm(

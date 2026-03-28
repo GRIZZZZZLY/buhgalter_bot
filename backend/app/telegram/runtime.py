@@ -61,6 +61,8 @@ from app.telegram.keyboards import (
     suggestion_keyboard,
     undo_inline_keyboard,
     voice_confirmation_keyboard,
+    planned_freeform_keyboard,
+    recurring_freeform_keyboard,
 )
 from app.telegram.onboarding import OnboardingFlow, ONBOARDING_STEP_KEY
 
@@ -244,6 +246,52 @@ def _format_recurring_schedule(rt) -> str:
         label = _weekday_labels[rt.day_value] if 0 <= rt.day_value <= 6 else "?"
         return f"каждую неделю ({label})"
     return f"каждый месяц, {rt.day_value}-го"
+
+
+def _format_planned_confirm_msg(item: dict) -> str:
+    """Format confirmation message for a free-form planned expense."""
+    amount = float(item.get("amount") or 0)
+    title = item.get("title") or "Платёж"
+    planned_date = item.get("planned_date") or ""
+    reminder_time = item.get("reminder_time") or ""
+    cat = formatter.category_label(item.get("category") or "other")
+
+    date_line = f"\n📅 Дата: {planned_date}" if planned_date else ""
+    time_line = f"\n⏰ Напоминание: {reminder_time}" if reminder_time else ""
+    return (
+        f"📋 <b>Запланировать платёж?</b>\n"
+        f"💳 {title} — <b>{amount:,.0f} ₽</b>\n"
+        f"🏷 Категория: {cat}"
+        f"{date_line}"
+        f"{time_line}"
+    )
+
+
+def _format_recurring_confirm_msg(item: dict) -> str:
+    """Format confirmation message for a free-form recurring transaction."""
+    amount = float(item.get("amount") or 0)
+    title = item.get("title") or "Платёж"
+    tx_type = item.get("transaction_type", "expense")
+    cat = formatter.category_label(item.get("category") or "other")
+    _weekday_labels = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+    freq = item.get("frequency", "monthly")
+    day_value = int(item.get("day_value") or 1)
+    if freq == "daily":
+        schedule = "каждый день"
+    elif freq == "interval_days":
+        schedule = f"каждые {day_value} дн."
+    elif freq == "weekly":
+        wd = _weekday_labels[day_value] if 0 <= day_value <= 6 else "?"
+        schedule = f"каждую неделю ({wd})"
+    else:
+        schedule = f"каждый месяц, {day_value}-го"
+    type_label = "доход" if tx_type == "income" else "расход"
+    return (
+        f"🔄 <b>Добавить регулярный платёж?</b>\n"
+        f"💳 {title} — <b>{amount:,.0f} ₽</b> ({type_label})\n"
+        f"🏷 Категория: {cat}\n"
+        f"📆 Расписание: {schedule}"
+    )
 
 
 async def catfix_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -654,6 +702,8 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(planned_callback_handler, pattern=r"^planned:"))
     application.add_handler(CallbackQueryHandler(planned_input_callback_handler, pattern=r"^planned_input:"))
     application.add_handler(CallbackQueryHandler(recurring_input_callback_handler, pattern=r"^recurring_input:"))
+    application.add_handler(CallbackQueryHandler(planned_freeform_callback_handler, pattern=r"^planned_freeform:"))
+    application.add_handler(CallbackQueryHandler(recurring_freeform_callback_handler, pattern=r"^recurring_freeform:"))
     application.add_handler(CallbackQueryHandler(catfix_callback_handler,  pattern=r"^catfix:"))
     application.add_handler(CallbackQueryHandler(categories_callback_handler, pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
@@ -2159,6 +2209,132 @@ async def recurring_input_callback_handler(
 
 
 # ---------------------------------------------------------------------------
+# planned_freeform — free-form planned expense from text/voice
+# ---------------------------------------------------------------------------
+
+async def planned_freeform_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    action = query.data.split(":")[1]  # "save" or "cancel"
+
+    if action == "cancel":
+        if context.user_data:
+            context.user_data.pop("pending_planned_freeform", None)
+        try:
+            await query.edit_message_text("Отменено.", reply_markup=main_menu_inline_keyboard())
+        except BadRequest:
+            pass
+        return
+
+    pending = (context.user_data or {}).pop("pending_planned_freeform", None)
+    if not pending:
+        try:
+            await query.edit_message_text("❌ Данные устарели. Начни заново.", reply_markup=main_menu_inline_keyboard())
+        except BadRequest:
+            pass
+        return
+
+    from datetime import date as date_cls, timedelta
+    from app.services.planned_expense_service import PlannedExpenseService
+
+    raw_date = pending.get("planned_date") or ""
+    try:
+        planned_date = date_cls.fromisoformat(raw_date) if raw_date else date_cls.today() + timedelta(days=1)
+    except ValueError:
+        planned_date = date_cls.today() + timedelta(days=1)
+
+    reminder_time = pending.get("reminder_time") or None
+
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        svc = PlannedExpenseService(db)
+        item = svc.create_manual(
+            telegram_user_id=update.effective_user.id,
+            title=pending.get("title") or "Платёж",
+            amount=float(pending.get("amount") or 0),
+            category=pending.get("category") or "other",
+            planned_date=planned_date,
+            reminder_time=reminder_time,
+        )
+
+    date_str = item.planned_date.isoformat() if hasattr(item.planned_date, "isoformat") else str(item.planned_date)
+    time_str = f" в {reminder_time}" if reminder_time else ""
+    from app.telegram.keyboards import planned_done_keyboard
+    try:
+        await query.edit_message_text(
+            f"✅ Запланировано: {item.title} — {float(item.amount):,.0f} ₽\n📅 {date_str}{time_str}",
+            reply_markup=planned_done_keyboard(),
+        )
+    except BadRequest:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# recurring_freeform — free-form recurring transaction from text/voice
+# ---------------------------------------------------------------------------
+
+async def recurring_freeform_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    action = query.data.split(":")[1]  # "save" or "cancel"
+
+    if action == "cancel":
+        if context.user_data:
+            context.user_data.pop("pending_recurring_freeform", None)
+        try:
+            await query.edit_message_text("Отменено.", reply_markup=main_menu_inline_keyboard())
+        except BadRequest:
+            pass
+        return
+
+    pending = (context.user_data or {}).pop("pending_recurring_freeform", None)
+    if not pending:
+        try:
+            await query.edit_message_text("❌ Данные устарели. Начни заново.", reply_markup=main_menu_inline_keyboard())
+        except BadRequest:
+            pass
+        return
+
+    from app.services.recurring_service import RecurringService
+
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        svc = RecurringService(db)
+        rt = svc.create(
+            telegram_user_id=update.effective_user.id,
+            title=pending.get("title") or "Платёж",
+            amount=float(pending.get("amount") or 0),
+            transaction_type=pending.get("transaction_type") or "expense",
+            category=pending.get("category") or "other",
+            frequency=pending.get("frequency") or "monthly",
+            day_value=int(pending.get("day_value") or 1),
+        )
+
+    sign = "+" if rt.transaction_type == "income" else "−"
+    freq_label = _format_recurring_schedule(rt)
+    from app.telegram.keyboards import recurring_done_keyboard
+    try:
+        await query.edit_message_text(
+            f"✅ Добавлено: {rt.title} {sign}{float(rt.amount):,.0f} ₽ — {freq_label}",
+            reply_markup=recurring_done_keyboard(),
+        )
+    except BadRequest:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # /budget
 # ---------------------------------------------------------------------------
 
@@ -2950,6 +3126,30 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
+    if action == "planned_confirm":
+        items = response.get("parsed_items") or []
+        if items:
+            item = items[0]
+            context.user_data["pending_planned_freeform"] = item
+            await update.effective_message.reply_text(
+                _format_planned_confirm_msg(item),
+                reply_markup=planned_freeform_keyboard(),
+                parse_mode="HTML",
+            )
+        return
+
+    if action == "recurring_confirm":
+        items = response.get("parsed_items") or []
+        if items:
+            item = items[0]
+            context.user_data["pending_recurring_freeform"] = item
+            await update.effective_message.reply_text(
+                _format_recurring_confirm_msg(item),
+                reply_markup=recurring_freeform_keyboard(),
+                parse_mode="HTML",
+            )
+        return
+
     if action == "clarify_category_choice":
         await update.effective_message.reply_text(
             response["message"],
@@ -3129,6 +3329,30 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=voice_confirmation_keyboard(response["voice_log_id"]),
             parse_mode="HTML",
         )
+        return
+
+    if action == "planned_confirm":
+        items = response.get("parsed_items") or []
+        if items:
+            item = items[0]
+            context.user_data["pending_planned_freeform"] = item
+            await update.effective_message.reply_text(
+                _format_planned_confirm_msg(item),
+                reply_markup=planned_freeform_keyboard(),
+                parse_mode="HTML",
+            )
+        return
+
+    if action == "recurring_confirm":
+        items = response.get("parsed_items") or []
+        if items:
+            item = items[0]
+            context.user_data["pending_recurring_freeform"] = item
+            await update.effective_message.reply_text(
+                _format_recurring_confirm_msg(item),
+                reply_markup=recurring_freeform_keyboard(),
+                parse_mode="HTML",
+            )
         return
 
     if action == "clarify_category_choice":

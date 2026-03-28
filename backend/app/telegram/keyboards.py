@@ -271,6 +271,22 @@ def recurring_done_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def planned_freeform_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation keyboard for planned expense detected from free-form text/voice."""
+    return InlineKeyboardMarkup([
+        [_btn("✅ Сохранить", "planned_freeform:save"),
+         _btn("❌ Отмена", "planned_freeform:cancel")],
+    ])
+
+
+def recurring_freeform_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation keyboard for recurring transaction detected from free-form text/voice."""
+    return InlineKeyboardMarkup([
+        [_btn("✅ Сохранить", "recurring_freeform:save"),
+         _btn("❌ Отмена", "recurring_freeform:cancel")],
+    ])
+
+
 def categories_nav_keyboard(categories_by_type: dict) -> InlineKeyboardMarkup:
     """Per-category row: emoji+name button (→edit) + ✏️ + optional 🗑."""
     rows: list[list[InlineKeyboardButton]] = []

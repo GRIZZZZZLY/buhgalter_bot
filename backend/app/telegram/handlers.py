@@ -10,7 +10,7 @@ from app.schemas.parser import ParseResult
 from app.services.advisor_intent_router import AdvisorIntentRouter
 from app.services.financial_qa_service import FinancialQAService
 from app.services.input_guard import InputGuard
-from app.services.llm_service import LLMService, LLMUnavailableError
+from app.services.llm_service import LLMService, LLMUnavailableError, LLMPlannedResult, LLMRecurringResult, LLMTransactionResult
 from app.services.parser_service import ParserService
 from app.services.transaction_service import TransactionService
 from app.services.voice_flow_service import VoiceFlowService
@@ -109,6 +109,8 @@ class TelegramTextFlow:
             payload: dict[str, object] = {"action": voice_edit.action, "message": voice_edit.message}
             if voice_edit.voice_log_id is not None:
                 payload["voice_log_id"] = str(voice_edit.voice_log_id)
+            if voice_edit.parsed_items:
+                payload["parsed_items"] = voice_edit.parsed_items
             return payload
 
         # Question shortcut: route financial questions directly to QA service
@@ -143,6 +145,34 @@ class TelegramTextFlow:
         if llm_result.intent == "advisor":
             answer = FinancialQAService(self.db).answer(normalized_text, telegram_user_id)
             return {"action": "advisor", "message": answer}
+
+        if isinstance(llm_result, LLMPlannedResult):
+            return {
+                "action": "planned_confirm",
+                "parsed_items": [{
+                    "title": llm_result.title,
+                    "amount": str(llm_result.amount),
+                    "category": llm_result.category,
+                    "planned_date": llm_result.planned_date.isoformat() if llm_result.planned_date else "",
+                    "reminder_time": llm_result.reminder_time or "",
+                }],
+            }
+
+        if isinstance(llm_result, LLMRecurringResult):
+            return {
+                "action": "recurring_confirm",
+                "parsed_items": [{
+                    "title": llm_result.title,
+                    "amount": str(llm_result.amount),
+                    "category": llm_result.category,
+                    "transaction_type": llm_result.transaction_type,
+                    "frequency": llm_result.frequency,
+                    "day_value": str(llm_result.day_value),
+                }],
+            }
+
+        if not isinstance(llm_result, LLMTransactionResult):
+            return {"action": "fallback", "message": "Не удалось обработать сообщение."}
 
         # Save transaction(s)
         saved_items: list[dict[str, str]] = []

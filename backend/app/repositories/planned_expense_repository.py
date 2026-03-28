@@ -20,6 +20,7 @@ class PlannedExpenseRepository:
         planned_date: date,
         source: str = "manual",
         recurring_transaction_id: int | None = None,
+        reminder_time: str | None = None,
     ) -> PlannedExpense:
         item = PlannedExpense(
             telegram_user_id=telegram_user_id,
@@ -30,6 +31,7 @@ class PlannedExpenseRepository:
             source=PlannedExpenseSource(source),
             recurring_transaction_id=recurring_transaction_id,
             status=PlannedExpenseStatus.PENDING,
+            reminder_time=reminder_time,
         )
         self.db.add(item)
         self.db.flush()
