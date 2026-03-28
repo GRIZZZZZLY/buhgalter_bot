@@ -580,6 +580,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("edit", edit_command))
     application.add_handler(CommandHandler("export", export_command))
+    application.add_handler(CommandHandler("import", import_command))
     application.add_handler(CommandHandler("plan", plan_command))
     application.add_handler(CommandHandler("planned", planned_command))
     application.add_handler(CommandHandler("ask", ask_command))
@@ -601,9 +602,11 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(categories_callback_handler, pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
     application.add_handler(CallbackQueryHandler(advisor_callback_handler, pattern=r"^advisor:"))
+    application.add_handler(CallbackQueryHandler(import_callback_handler,   pattern=r"^import:"))
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
     application.add_handler(CallbackQueryHandler(reset_callback_handler,   pattern=r"^reset:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
+    application.add_handler(MessageHandler(filters.Document.ALL, document_message_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     return application
 
@@ -947,6 +950,117 @@ async def edit_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
 # ---------------------------------------------------------------------------
 # /export
 # ---------------------------------------------------------------------------
+
+def _import_preview_keyboard(ready: bool):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    if ready:
+        rows = [
+            [InlineKeyboardButton("✅ Импортировать", callback_data="import:confirm")],
+            [InlineKeyboardButton("✕ Отменить", callback_data="import:cancel")],
+        ]
+    else:
+        rows = [[InlineKeyboardButton("✕ Закрыть", callback_data="import:cancel")]]
+    return InlineKeyboardMarkup(rows)
+
+
+async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.effective_message.reply_text(
+        "Пришли CSV или XLSX файлом, и я сначала покажу dry-run превью.\n"
+        "Сохраняю только после отдельного подтверждения.\n\n"
+        "PDF пока только распознаю как неподдерживаемый безопасный сценарий, без автоимпорта.",
+        reply_markup=done_keyboard(),
+    )
+
+
+async def document_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.services.import_service import ImportService
+
+    message = update.effective_message
+    if message is None or message.document is None:
+        return
+
+    filename = message.document.file_name or "document"
+    detected_format = ImportService.detect_format(filename)
+    if detected_format not in ImportService.SUPPORTED_EXTENSIONS:
+        return
+
+    placeholder = await message.reply_text("📥 Смотрю файл…")
+    telegram_file = await context.bot.get_file(message.document.file_id)
+    content = bytes(await telegram_file.download_as_bytearray())
+
+    preview = ImportService().build_preview(filename=filename, content=content)
+    if context.user_data is not None:
+        context.user_data.pop("pending_import_rows", None)
+        context.user_data.pop("pending_import_filename", None)
+        if preview.ready_to_import:
+            context.user_data["pending_import_rows"] = preview.to_pending_payload()
+            context.user_data["pending_import_filename"] = preview.filename
+
+    try:
+        await placeholder.delete()
+    except BadRequest:
+        pass
+
+    await message.reply_text(
+        ImportService().render_preview_message(preview),
+        reply_markup=_import_preview_keyboard(preview.ready_to_import),
+    )
+
+
+async def import_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    action = query.data.removeprefix("import:")
+    if action == "cancel":
+        if context.user_data is not None:
+            context.user_data.pop("pending_import_rows", None)
+            context.user_data.pop("pending_import_filename", None)
+        await query.edit_message_text("Импорт отменён.", reply_markup=done_keyboard(back_target="nav:menu"))
+        return
+
+    pending_rows = (context.user_data or {}).get("pending_import_rows")
+    filename = (context.user_data or {}).get("pending_import_filename", "файл")
+    if action != "confirm" or not pending_rows:
+        await query.edit_message_text(
+            "❌ Превью устарело. Пришли файл заново.",
+            reply_markup=done_keyboard(back_target="nav:menu"),
+        )
+        return
+
+    from datetime import date as date_cls
+    from app.services.transaction_service import TransactionService
+
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        svc = TransactionService(db)
+        for row in pending_rows:
+            svc.create_imported(
+                update.effective_user.id,
+                tx_type=str(row["tx_type"]),
+                amount=str(row["amount"]),
+                category=str(row["category"]),
+                description=(str(row["description"]) if row.get("description") else None),
+                source=str(row.get("source") or "text"),
+                raw_input=f"import:{filename}:row:{row['row_number']}",
+                override_date=date_cls.fromisoformat(str(row["created_at"])),
+            )
+
+    if context.user_data is not None:
+        context.user_data.pop("pending_import_rows", None)
+        context.user_data.pop("pending_import_filename", None)
+
+    await query.edit_message_text(
+        f"✅ Импортировал {len(pending_rows)} записей из {filename}.",
+        reply_markup=done_keyboard(back_target="nav:operations"),
+    )
+
 
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     import io
@@ -1586,7 +1700,8 @@ async def advisor_callback_handler(update: Update, context: ContextTypes.DEFAULT
     slug = data.removeprefix("advisor:scenario:")
     if slug == "export":
         await update.effective_message.reply_text(
-            "Экспорт уже доступен:\n• /export month\n• /export xlsx month\n• /export csv week\n• /export xlsx all",
+            "Экспорт уже доступен:\n• /export month\n• /export xlsx month\n• /export csv week\n• /export xlsx all\n\n"
+            "Импорт тоже есть: просто пришли CSV/XLSX файлом, я сначала покажу dry-run превью.",
             reply_markup=done_keyboard(back_target="nav:advisor"),
         )
         return

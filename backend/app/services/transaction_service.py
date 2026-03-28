@@ -94,6 +94,33 @@ class TransactionService:
         transaction = self.repository.create(data)
         return self._to_item(transaction)
 
+    def create_imported(
+        self,
+        telegram_user_id: int,
+        *,
+        tx_type: str,
+        amount: str | Decimal,
+        category: str,
+        description: str | None,
+        source: str = "text",
+        raw_input: str | None = None,
+        override_date: date | None = None,
+    ) -> TransactionItem:
+        data = {
+            "telegram_user_id": telegram_user_id,
+            "type": tx_type,
+            "amount": Decimal(amount),
+            "category": category,
+            "description": description,
+            "source": source,
+            "raw_input": raw_input or f"import {tx_type} {amount} {category}",
+            "confidence": 1.0,
+        }
+        if override_date is not None:
+            data["created_at"] = datetime.combine(override_date, time(23, 59, 59), tzinfo=timezone.utc)
+        transaction = self.repository.create(data)
+        return self._to_item(transaction)
+
     def update_transaction(
         self,
         telegram_user_id: int,
