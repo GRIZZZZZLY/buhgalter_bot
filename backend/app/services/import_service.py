@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -37,9 +37,21 @@ class ImportPreview:
     skipped_rows: list[str]
     warnings: list[str]
     rows_skipped_duplicates: int = 0
+    rows_skipped_invalid: int = 0
+    invalid_reasons: list[str] = field(default_factory=list)
 
     def to_pending_payload(self) -> list[dict[str, str | int | None]]:
         return [row.to_dict() for row in self.importable_rows]
+
+
+VALIDATION_MESSAGES = {
+    "missing_amount":   "нет суммы",
+    "invalid_date":     "некорректная дата",
+    "future_date":      "дата в будущем",
+    "negative_amount":  "отрицательная сумма",
+    "missing_desc":     "нет описания",
+    "amount_too_large": "сумма > 10 000 000 ₽ (проверь)",
+}
 
 
 class ImportService:
@@ -50,6 +62,52 @@ class ImportService:
         self._reverse_categories = {
             value.lower(): key for key, value in self._formatter.CATEGORY_LABELS_RU.items()
         }
+
+    @staticmethod
+    def _validate_row(row: dict) -> list[str]:
+        errors: list[str] = []
+        amount_raw = row.get("amount") or row.get("Сумма")
+        if not amount_raw:
+            errors.append(VALIDATION_MESSAGES["missing_amount"])
+        else:
+            try:
+                normalized = str(amount_raw).replace("₽", "").replace(" ", "").replace(",", ".")
+                amount = float(normalized)
+                if amount < 0:
+                    errors.append(VALIDATION_MESSAGES["negative_amount"])
+                if amount > 10_000_000:
+                    errors.append(VALIDATION_MESSAGES["amount_too_large"])
+            except Exception:
+                errors.append(VALIDATION_MESSAGES["missing_amount"])
+
+        date_raw = row.get("date") or row.get("Дата")
+        if not date_raw:
+            errors.append(VALIDATION_MESSAGES["invalid_date"])
+        else:
+            try:
+                raw = str(date_raw).strip()
+                parsed: date | None = None
+                try:
+                    parsed = date.fromisoformat(raw)
+                except ValueError:
+                    for fmt in ("%d.%m.%Y", "%Y/%m/%d"):
+                        try:
+                            parsed = datetime.strptime(raw, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                if parsed is None:
+                    errors.append(VALIDATION_MESSAGES["invalid_date"])
+                elif parsed > date.today():
+                    errors.append(VALIDATION_MESSAGES["future_date"])
+            except Exception:
+                errors.append(VALIDATION_MESSAGES["invalid_date"])
+
+        desc_raw = row.get("description") or row.get("Описание")
+        if not desc_raw or not str(desc_raw).strip():
+            errors.append(VALIDATION_MESSAGES["missing_desc"])
+
+        return errors
 
     @staticmethod
     def _dedup_key(created_at: str, amount: str, description: str | None) -> str:
@@ -80,6 +138,8 @@ class ImportService:
             skipped_rows=preview.skipped_rows,
             warnings=preview.warnings,
             rows_skipped_duplicates=dup_count,
+            rows_skipped_invalid=preview.rows_skipped_invalid,
+            invalid_reasons=list(preview.invalid_reasons),
         )
 
     @staticmethod
@@ -132,7 +192,10 @@ class ImportService:
         ]
         if preview.rows_skipped_duplicates:
             lines.append(f"Пропущено дублей: {preview.rows_skipped_duplicates} (уже есть в базе)")
-        if preview.skipped_rows:
+        if preview.rows_skipped_invalid:
+            reasons_str = ", ".join(preview.invalid_reasons) if preview.invalid_reasons else "ошибки в данных"
+            lines.append(f"Пропущено невалидных: {preview.rows_skipped_invalid} ({reasons_str})")
+        if preview.skipped_rows and not preview.rows_skipped_invalid:
             lines.append(f"Пропущено: {len(preview.skipped_rows)}")
         if preview.importable_rows:
             lines.append("\nПредпросмотр:")
@@ -191,11 +254,20 @@ class ImportService:
         importable_rows: list[ImportRowPreview] = []
         skipped_rows: list[str] = []
         warnings: list[str] = []
+        rows_skipped_invalid = 0
+        invalid_reasons: list[str] = []
 
         for idx, row in enumerate(rows, start=2):
             try:
                 importable_rows.append(self._normalize_row(idx, row))
             except ValueError as exc:
+                rows_skipped_invalid += 1
+                # Collect unique human-readable reasons from _validate_row
+                validation_errors = self._validate_row(row)
+                if validation_errors:
+                    for reason in validation_errors:
+                        if reason not in invalid_reasons:
+                            invalid_reasons.append(reason)
                 skipped_rows.append(f"строка {idx}: {exc}")
 
         if not importable_rows:
@@ -209,6 +281,8 @@ class ImportService:
             importable_rows=importable_rows,
             skipped_rows=skipped_rows,
             warnings=warnings,
+            rows_skipped_invalid=rows_skipped_invalid,
+            invalid_reasons=invalid_reasons,
         )
 
     def _normalize_row(self, row_number: int, row: dict[str, Any]) -> ImportRowPreview:
