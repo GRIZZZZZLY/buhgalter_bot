@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from app.services.apply_action import ApplyAction, ApplyActionType
 from app.services.financial_analytics_service import FinancialAnalyticsSnapshot
 from app.services.financial_snapshot_service import FinancialSnapshot
 
@@ -15,6 +17,9 @@ class RecommendationItem:
     score: float
     action_type: str
     category: str | None = None
+    can_apply: bool = False
+    apply_action: ApplyAction | None = None
+    why_now: str | None = None
 
     @property
     def priority(self) -> str:
@@ -56,6 +61,8 @@ class RecommendationService:
         sorted_items = sorted(candidates, key=lambda item: item.score, reverse=True)
         primary = sorted_items[0] if sorted_items else None
         secondary = sorted_items[1:3] if len(sorted_items) > 1 else []
+        if primary is not None:
+            primary = self._enrich_with_apply_action(primary, snapshot, analytics)
         return RecommendationSnapshot(
             primary=primary,
             secondary=secondary,
@@ -177,3 +184,89 @@ class RecommendationService:
                 category=top.category,
             )
         ]
+
+    def _make_apply_action_for_budget(
+        self,
+        category: str,
+        suggested_limit: Decimal,
+    ) -> ApplyAction:
+        return ApplyAction(
+            action_type=ApplyActionType.SET_BUDGET,
+            label=f"Поставить бюджет «{category}» {suggested_limit:.0f} ₽/мес",
+            payload={
+                "category": category,
+                "amount": str(suggested_limit),
+            },
+            preview_text=(
+                f"Будет установлен месячный лимит:\n"
+                f"• Категория: {category}\n"
+                f"• Сумма: {suggested_limit:.0f} ₽\n\n"
+                f"Текущий лимит будет заменён."
+            ),
+            is_reversible=True,
+        )
+
+    def _make_apply_action_for_reminder(
+        self,
+        description: str,
+        payment_date,   # date
+        amount: Decimal,
+    ) -> ApplyAction:
+        remind_date = payment_date - timedelta(days=2)
+        return ApplyAction(
+            action_type=ApplyActionType.SET_REMINDER,
+            label=f"Напомнить о «{description}» за 2 дня",
+            payload={
+                "description": description,
+                "remind_date": remind_date.isoformat(),
+                "amount": str(amount),
+            },
+            preview_text=(
+                f"Будет установлено напоминание:\n"
+                f"• Платёж: {description} · {amount:.0f} ₽\n"
+                f"• Напомнить: {remind_date.strftime('%d %b')}"
+            ),
+            is_reversible=True,
+        )
+
+    def _enrich_with_apply_action(
+        self,
+        item: RecommendationItem,
+        snapshot,   # FinancialSnapshot
+        analytics,  # FinancialAnalyticsSnapshot
+    ) -> RecommendationItem:
+        """Добавляет can_apply, apply_action, why_now к primary recommendation."""
+        if item.action_type == "cut_costs" and item.category:
+            opportunity = getattr(analytics, "saving_opportunity", None)
+            if opportunity and opportunity.category == item.category:
+                apply_action = self._make_apply_action_for_budget(
+                    item.category,
+                    opportunity.suggested_limit,
+                )
+                return dataclasses.replace(
+                    item,
+                    can_apply=True,
+                    apply_action=apply_action,
+                    why_now=f"Можно сэкономить {float(opportunity.potential_saving):.0f} ₽/мес",
+                )
+
+        if item.action_type == "prepare_payment":
+            from datetime import date as _date
+            today_date = _date.fromisoformat(snapshot.today)
+            for planned in snapshot.planned_expenses:
+                if planned.description and planned.amount:
+                    days = (planned.date - today_date).days
+                    if 0 <= days <= 7:
+                        apply_action = self._make_apply_action_for_reminder(
+                            planned.description,
+                            planned.date,
+                            planned.amount,
+                        )
+                        return dataclasses.replace(
+                            item,
+                            can_apply=True,
+                            apply_action=apply_action,
+                            why_now=f"Платёж через {days} дн.",
+                        )
+
+        return item
