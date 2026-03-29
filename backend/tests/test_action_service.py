@@ -68,14 +68,14 @@ def test_set_reminder_creates_planned_expense(db_session: Session) -> None:
     assert "Аренда" in result.message
     assert "2026-04-03" in result.message
 
-    from app.repositories.planned_expense_repository import PlannedExpenseRepository
-    repo = PlannedExpenseRepository(db_session)
-    items = repo.list_all_for_user(777)
+    from app.services.planned_expense_service import PlannedExpenseService
+    pe_svc = PlannedExpenseService(db_session)
+    items = pe_svc.list_future(777)
     assert len(items) == 1
     assert items[0].title == "Аренда"
     assert float(items[0].amount) == 30000.0
     assert items[0].category == "other"
-    assert items[0].planned_date == date(2026, 4, 3)
+    assert items[0].planned_date == "2026-04-03"
 
 
 def test_add_planned_expense_creates_record(db_session: Session) -> None:
@@ -96,9 +96,9 @@ def test_add_planned_expense_creates_record(db_session: Session) -> None:
     assert "Страховка" in result.message
     assert "2026-05-01" in result.message
 
-    from app.repositories.planned_expense_repository import PlannedExpenseRepository
-    repo = PlannedExpenseRepository(db_session)
-    items = repo.list_all_for_user(888)
+    from app.services.planned_expense_service import PlannedExpenseService
+    pe_svc = PlannedExpenseService(db_session)
+    items = pe_svc.list_future(888)
     assert len(items) == 1
     assert items[0].title == "Страховка"
     assert float(items[0].amount) == 5000.0
