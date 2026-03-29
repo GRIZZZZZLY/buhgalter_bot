@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -981,8 +981,7 @@ async def apply_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def apply_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Agent v2 — executes pending_action via ActionService."""
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    from app.services.action_service import ActionService
+    from app.services.action_service import ActionResult, ActionService
 
     query = update.callback_query
     if query is None:
@@ -997,13 +996,26 @@ async def apply_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
+    expires_at = context.user_data.get("pending_action_expires_at")
+    if expires_at is not None and _time_now() > expires_at:
+        context.user_data.pop("pending_action", None)
+        context.user_data.pop("pending_action_expires_at", None)
+        try:
+            await query.edit_message_text("Действие устарело.", reply_markup=None)
+        except BadRequest:
+            pass
+        return
+
     telegram_user_id = update.effective_user.id if update.effective_user else None
     if telegram_user_id is None:
         return
 
-    with SessionLocal() as db:
-        svc = ActionService(db)
-        result = svc.execute(pending_action, telegram_user_id)
+    try:
+        with SessionLocal() as db:
+            svc = ActionService(db)
+            result = svc.execute(pending_action, telegram_user_id)
+    except Exception:
+        result = ActionResult(success=False, message="Произошла ошибка при выполнении действия. Попробуйте позже.")
 
     back_keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("← К советнику", callback_data="nav:advisor"),
