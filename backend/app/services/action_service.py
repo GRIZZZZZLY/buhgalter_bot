@@ -38,23 +38,31 @@ class ActionService:
         self.db = db
 
     def execute(self, action: ApplyAction, telegram_user_id: int) -> ActionResult:
-        if action.action_type == ApplyActionType.SET_BUDGET:
-            return self._set_budget(action, telegram_user_id)
-        if action.action_type == ApplyActionType.SET_REMINDER:
-            return self._set_reminder(action, telegram_user_id)
-        if action.action_type == ApplyActionType.ADD_PLANNED_EXPENSE:
-            return self._add_planned_expense(action, telegram_user_id)
-        if action.action_type == ApplyActionType.SET_TOTAL_BUDGET:
+        try:
+            if action.action_type == ApplyActionType.SET_BUDGET:
+                return self._set_budget(action, telegram_user_id)
+            if action.action_type == ApplyActionType.SET_REMINDER:
+                return self._set_reminder(action, telegram_user_id)
+            if action.action_type == ApplyActionType.ADD_PLANNED_EXPENSE:
+                return self._add_planned_expense(action, telegram_user_id)
+            if action.action_type == ApplyActionType.SET_TOTAL_BUDGET:
+                return ActionResult(
+                    status=ActionStatus.FAILURE,
+                    action_type=ApplyActionType.SET_TOTAL_BUDGET.value,
+                    message="Установка общего бюджета пока не поддерживается. Настройте бюджеты по категориям.",
+                )
             return ActionResult(
                 status=ActionStatus.FAILURE,
-                action_type=ApplyActionType.SET_TOTAL_BUDGET.value,
-                message="Установка общего бюджета пока не поддерживается. Настройте бюджеты по категориям.",
+                action_type=action.action_type.value,
+                message=f"Неизвестный тип действия: {action.action_type.value}",
             )
-        return ActionResult(
-            status=ActionStatus.FAILURE,
-            action_type=action.action_type.value,
-            message=f"Неизвестный тип действия: {action.action_type.value}",
-        )
+        except Exception as exc:
+            return ActionResult(
+                status=ActionStatus.FAILURE,
+                action_type=action.action_type.value,
+                message="Ошибка при выполнении действия.",
+                error=str(exc),
+            )
 
     def _set_budget(self, action: ApplyAction, telegram_user_id: int) -> ActionResult:
         try:
