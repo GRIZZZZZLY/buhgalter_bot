@@ -743,7 +743,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Start onboarding for new users (step key not yet set)
     if context.user_data is not None and context.user_data.get(ONBOARDING_STEP_KEY) is None:
         text, parse_mode = _onboarding.start(context.user_data)
-        await update.effective_message.reply_text(text, parse_mode=parse_mode)
+        await update.effective_message.reply_text(
+            text, parse_mode=parse_mode, reply_markup=main_menu_inline_keyboard()
+        )
         return
 
     settings = get_settings()

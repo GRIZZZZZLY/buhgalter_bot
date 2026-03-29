@@ -598,7 +598,11 @@ def reminders_inline_keyboard() -> InlineKeyboardMarkup:
 # ---------------------------------------------------------------------------
 
 def help_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[_back_btn()]])
+    return InlineKeyboardMarkup([
+        [_btn("📊 Сводка", "nav:stats"), _btn("💰 Бюджеты", "nav:budgets")],
+        [_btn("🤖 Советник", "nav:advisor"), _btn("📅 Планирование", "nav:planned_input")],
+        [_back_btn()],
+    ])
 
 
 # ---------------------------------------------------------------------------

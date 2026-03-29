@@ -193,8 +193,15 @@ class InsightService:
         return None
 
     def _detect_category_record(self, user: User) -> InsightFact | None:
-        """A category this month > 140% of same category last month."""
+        """A category this month > 140% of same category last month.
+
+        Requires the user to be registered for at least 45 days so the
+        previous-month window (30-60 days ago) contains meaningful data.
+        """
         now = self._now_utc()
+        user_age_days = (now - user.created_at.replace(tzinfo=timezone.utc)).days
+        if user_age_days < 45:
+            return None
         this_month_start = now - timedelta(days=30)
         last_month_start = now - timedelta(days=60)
 
