@@ -208,3 +208,29 @@ def test_undo_add_planned_expense_deletes_record(db_session: Session) -> None:
     pe_svc = PlannedExpenseService(db_session)
     items = pe_svc.list_future(555)
     assert not any(i.id == planned_id for i in items)
+
+
+def test_undo_set_reminder_deletes_record(db_session) -> None:
+    """undo SET_REMINDER удаляет созданное напоминание."""
+    action = ApplyAction(
+        action_type=ApplyActionType.SET_REMINDER,
+        label="Напомнить об «Аренда»",
+        payload={
+            "description": "Аренда",
+            "amount": 30000.0,
+            "payment_date": "2026-07-03",
+        },
+        preview_text="...",
+        is_reversible=False,
+    )
+    svc = ActionService(db_session)
+    result = svc.execute(action, telegram_user_id=555)
+    assert result.success is True
+    planned_id = result.undo_payload["planned_id"]
+
+    undo_result = svc.undo(result.undo_payload, telegram_user_id=555)
+    assert undo_result.success is True
+    from app.services.planned_expense_service import PlannedExpenseService
+    pe_svc = PlannedExpenseService(db_session)
+    items = pe_svc.list_future(555)
+    assert not any(i.id == planned_id for i in items)

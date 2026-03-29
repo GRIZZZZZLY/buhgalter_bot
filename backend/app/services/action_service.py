@@ -191,6 +191,7 @@ class ActionService:
         category = payload["category"]
         old_amount = float(payload["old_amount"])
         repo = CategoryBudgetRepository(self.db)
+        # old_amount is always float(existing.amount) or 0.0 — safe for exact comparison
         if old_amount == 0.0:
             repo.remove(telegram_user_id, category)
         else:
