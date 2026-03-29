@@ -53,7 +53,8 @@ async def test_apply_confirm_executes_set_budget() -> None:
         mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("app.services.action_service.ActionService.execute") as mock_execute:
-            mock_execute.return_value = ActionResult(success=True, message="✅ Бюджет «food» установлен: 5000 ₽/мес")
+            from app.services.action_service import ActionStatus
+            mock_execute.return_value = ActionResult(status=ActionStatus.SUCCESS, action_type="set_budget", message="✅ Бюджет «food» установлен: 5000 ₽/мес")
             await apply_confirm_handler(update, ctx)
 
     query.edit_message_text.assert_called_once()
@@ -103,7 +104,8 @@ async def test_apply_confirm_failure_result_shown_to_user() -> None:
         mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("app.services.action_service.ActionService.execute") as mock_execute:
-            mock_execute.return_value = ActionResult(success=False, message="Установка общего бюджета пока не поддерживается.")
+            from app.services.action_service import ActionStatus
+            mock_execute.return_value = ActionResult(status=ActionStatus.FAILURE, action_type="set_total_budget", message="Установка общего бюджета пока не поддерживается.")
             await apply_confirm_handler(update, ctx)
 
     query.edit_message_text.assert_called_once()
