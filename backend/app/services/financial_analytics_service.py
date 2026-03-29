@@ -4,8 +4,9 @@ import calendar
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
+from enum import Enum
 
-from app.services.financial_snapshot_service import FinancialSnapshot
+from app.services.financial_snapshot_service import FinancialSnapshot, MonthlyStatsSnapshot
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,44 @@ class FinancialAnalyticsSnapshot:
     forecast: ForecastSnapshot
     budget_health: BudgetHealthSnapshot
     primary_risk: PrimaryRiskSnapshot | None
+
+
+class RiskType(Enum):
+    BUDGET_OVERRUN = "budget_overrun"
+    BUDGET_NEAR_LIMIT = "budget_near_limit"
+    FORECAST_OVERRUN = "forecast_overrun"
+    UPCOMING_LARGE = "upcoming_large"
+    SPENDING_SPIKE = "spending_spike"
+    NONE = "none"
+
+
+@dataclass(frozen=True)
+class PrimaryRisk:
+    risk_type: RiskType
+    title: str
+    detail: str
+    severity: float
+    category: str | None
+    amount: Decimal | None
+
+
+@dataclass(frozen=True)
+class SavingOpportunity:
+    category: str
+    current_spend: Decimal
+    suggested_limit: Decimal
+    potential_saving: Decimal
+    reason: str
+    confidence: str
+
+
+@dataclass(frozen=True)
+class PaymentPressure:
+    total_upcoming: Decimal
+    available_balance: Decimal
+    coverage_ratio: float
+    critical_payments: list[dict]
+    pressure_level: str
 
 
 class FinancialAnalyticsService:
@@ -142,3 +181,179 @@ class FinancialAnalyticsService:
     @staticmethod
     def _fmt(value: Decimal) -> str:
         return f"{value.quantize(Decimal('1'), rounding=ROUND_HALF_UP):.0f}₽"
+
+    # ------------------------------------------------------------------ #
+    # New methods added in Sprint A1                                       #
+    # ------------------------------------------------------------------ #
+
+    def detect_primary_risk_v2(self, snapshot: FinancialSnapshot) -> PrimaryRisk:
+        candidates: list[PrimaryRisk] = []
+
+        for budget in snapshot.budgets:
+            pct = budget.percent_used
+            if pct >= 100:
+                severity = min(1.0, (pct - 100) / 50 + 0.8)
+                overspend = budget.amount * Decimal(str(pct / 100)) - budget.amount
+                candidates.append(PrimaryRisk(
+                    risk_type=RiskType.BUDGET_OVERRUN,
+                    title="Превышен бюджет",
+                    detail=f"Категория «{budget.category}» вышла за лимит на {self._fmt(overspend)}.",
+                    severity=severity,
+                    category=budget.category,
+                    amount=overspend,
+                ))
+            elif 85 <= pct < 100:
+                severity = 0.5 + (pct - 85) / 100
+                candidates.append(PrimaryRisk(
+                    risk_type=RiskType.BUDGET_NEAR_LIMIT,
+                    title="Бюджет почти исчерпан",
+                    detail=f"Категория «{budget.category}» использована на {pct:.0f}%.",
+                    severity=severity,
+                    category=budget.category,
+                    amount=None,
+                ))
+
+        forecast = self.forecast_month_end(snapshot)
+        total_budget = sum((b.amount for b in snapshot.budgets), Decimal("0"))
+        if total_budget > 0 and forecast.projected_expenses > total_budget:
+            overrun = forecast.projected_expenses - total_budget
+            candidates.append(PrimaryRisk(
+                risk_type=RiskType.FORECAST_OVERRUN,
+                title="Прогноз превысит бюджет",
+                detail=(
+                    f"При текущем темпе расходы к концу месяца составят "
+                    f"{self._fmt(forecast.projected_expenses)}, что превышает бюджет на {self._fmt(overrun)}."
+                ),
+                severity=0.6,
+                category=None,
+                amount=overrun,
+            ))
+
+        today = date.today()
+        for planned in snapshot.planned_expenses:
+            days_until = (planned.date - today).days
+            if 0 <= days_until <= 7 and planned.amount >= Decimal("5000"):
+                candidates.append(PrimaryRisk(
+                    risk_type=RiskType.UPCOMING_LARGE,
+                    title="Крупный платёж на горизонте",
+                    detail=f"Через {days_until} дн. запланирован платёж на {self._fmt(planned.amount)}: {planned.description}.",
+                    severity=0.6,
+                    category=None,
+                    amount=planned.amount,
+                ))
+
+        if not candidates:
+            return PrimaryRisk(
+                risk_type=RiskType.NONE,
+                title="Рисков не обнаружено",
+                detail="Финансовая ситуация в норме.",
+                severity=0.0,
+                category=None,
+                amount=None,
+            )
+
+        return max(candidates, key=lambda r: r.severity)
+
+    def _compute_avg_category_spend(
+        self, monthly_stats: list[MonthlyStatsSnapshot]
+    ) -> dict[str, Decimal]:
+        totals: dict[str, list[Decimal]] = {}
+        for month in monthly_stats:
+            for cat, amount in month.category_spend.items():
+                totals.setdefault(cat, []).append(amount)
+        return {
+            cat: sum(amounts) / len(amounts)
+            for cat, amounts in totals.items()
+        }
+
+    def top_saving_opportunity(
+        self,
+        snapshot: FinancialSnapshot,
+        monthly_stats: list[MonthlyStatsSnapshot],
+    ) -> SavingOpportunity | None:
+        avg_spend = self._compute_avg_category_spend(monthly_stats)
+        current_spend: dict[str, Decimal] = {}
+        if snapshot.monthly_stats:
+            current_spend = dict(snapshot.monthly_stats[0].category_spend)
+
+        budget_categories = {b.category for b in snapshot.budgets}
+        opportunities: list[SavingOpportunity] = []
+
+        for cat, spend in current_spend.items():
+            if spend < Decimal("3000"):
+                continue
+
+            avg = avg_spend.get(cat)
+
+            if cat not in budget_categories:
+                opportunities.append(SavingOpportunity(
+                    category=cat,
+                    current_spend=spend,
+                    suggested_limit=(spend * Decimal("0.8")).quantize(Decimal("1"), rounding=ROUND_HALF_UP),
+                    potential_saving=(spend * Decimal("0.2")).quantize(Decimal("1"), rounding=ROUND_HALF_UP),
+                    reason="Нет бюджетного лимита",
+                    confidence="medium",
+                ))
+            elif avg and avg > Decimal("0"):
+                growth = float(spend / avg)
+                if growth >= 1.3:
+                    confidence = "high" if growth >= 1.5 else "medium"
+                    opportunities.append(SavingOpportunity(
+                        category=cat,
+                        current_spend=spend,
+                        suggested_limit=avg.quantize(Decimal("1"), rounding=ROUND_HALF_UP),
+                        potential_saving=(spend - avg).quantize(Decimal("1"), rounding=ROUND_HALF_UP),
+                        reason=f"На {(growth - 1) * 100:.0f}% выше среднего",
+                        confidence=confidence,
+                    ))
+
+        if not opportunities:
+            return None
+        return max(opportunities, key=lambda o: o.potential_saving)
+
+    def upcoming_payment_pressure(self, snapshot: FinancialSnapshot) -> PaymentPressure:
+        today = date.today()
+        upcoming_14: list = []
+        critical_3: list[dict] = []
+
+        for planned in snapshot.planned_expenses:
+            days_until = (planned.date - today).days
+            if 0 <= days_until <= 14:
+                upcoming_14.append(planned)
+            if 0 <= days_until <= 3:
+                critical_3.append({
+                    "description": planned.description,
+                    "amount": float(planned.amount),
+                    "date": planned.date.isoformat(),
+                    "days_until": days_until,
+                })
+
+        total = sum((p.amount for p in upcoming_14), Decimal("0"))
+        balance = snapshot.balance or Decimal("0")
+
+        if total <= Decimal("0"):
+            return PaymentPressure(
+                total_upcoming=Decimal("0"),
+                available_balance=balance,
+                coverage_ratio=1.0,
+                critical_payments=[],
+                pressure_level="none",
+            )
+
+        ratio = float(balance) / float(total)
+        if ratio < 0.5:
+            level = "high"
+        elif ratio < 1.0:
+            level = "medium"
+        elif ratio < 2.0:
+            level = "low"
+        else:
+            level = "none"
+
+        return PaymentPressure(
+            total_upcoming=total,
+            available_balance=balance,
+            coverage_ratio=ratio,
+            critical_payments=sorted(critical_3, key=lambda p: p["days_until"]),
+            pressure_level=level,
+        )
