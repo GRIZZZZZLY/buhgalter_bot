@@ -560,3 +560,16 @@ class AdvisorFormatter:
                 step_block += f"\n<i>{payload.why_now}</i>"
             parts.append(step_block)
         return "\n".join(parts)
+
+    def format_action_result(self, result) -> str:
+        """Рендер результата выполненного действия (ActionResult)."""
+        if result.success:
+            parts = [result.message]
+            if result.detail:
+                parts.append(f"<i>{result.detail}</i>")
+            return "\n".join(parts)
+        else:
+            parts = [f"❌ {result.message}"]
+            if result.detail:
+                parts.append(f"<i>{result.detail}</i>")
+            return "\n".join(parts)

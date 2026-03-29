@@ -978,3 +978,25 @@ def intent_clarify_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def undo_keyboard(result) -> InlineKeyboardMarkup:
+    """
+    Клавиатура после успешного действия.
+    Показывает кнопку отмены если result.is_reversible и undo_payload непустой.
+    """
+    rows = []
+    if result.is_reversible and result.undo_payload:
+        rows.append([InlineKeyboardButton("↩ Отменить", callback_data="action:undo")])
+    rows.append([
+        InlineKeyboardButton("← К советнику", callback_data="nav:advisor"),
+        InlineKeyboardButton("≡ Меню", callback_data="nav:menu"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def back_keyboard() -> InlineKeyboardMarkup:
+    """Простая навигация без undo."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("← К советнику", callback_data="nav:advisor"),
+        InlineKeyboardButton("≡ Меню", callback_data="nav:menu"),
+    ]])
+
