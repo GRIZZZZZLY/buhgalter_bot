@@ -32,7 +32,7 @@ def _make_context(pending_action=None) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_apply_confirm_executes_set_budget() -> None:
-    """apply_confirm_handler вызывает ActionService и показывает результат."""
+    """Unit test: apply_confirm_handler correctly wires to ActionService and shows result.message."""
     from app.telegram.runtime import apply_confirm_handler
     from app.services.action_service import ActionResult
 

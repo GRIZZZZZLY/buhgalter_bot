@@ -9,6 +9,8 @@ from app.repositories.category_budget_repository import CategoryBudgetRepository
 from app.services.apply_action import ApplyAction, ApplyActionType
 from app.services.planned_expense_service import PlannedExpenseService
 
+_DEFAULT_REMINDER_TIME = "09:00"
+
 
 @dataclass(frozen=True)
 class ActionResult:
@@ -66,7 +68,7 @@ class ActionService:
             amount=amount,
             category="other",
             planned_date=payment_date,
-            reminder_time="09:00",
+            reminder_time=_DEFAULT_REMINDER_TIME,
         )
 
         return ActionResult(

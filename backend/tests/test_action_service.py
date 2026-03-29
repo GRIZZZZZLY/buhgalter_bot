@@ -74,7 +74,7 @@ def test_set_reminder_creates_planned_expense(db_session: Session) -> None:
     assert items[0].title == "Аренда"
     assert float(items[0].amount) == 30000.0
     assert items[0].category == "other"
-    assert items[0].planned_date == "2026-04-03"
+    assert str(items[0].planned_date) == "2026-04-03"
 
 
 def test_add_planned_expense_creates_record(db_session: Session) -> None:
