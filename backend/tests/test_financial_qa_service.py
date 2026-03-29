@@ -131,7 +131,7 @@ def test_financial_qa_returns_structured_payload(db_session) -> None:
     assert payload.basis == ["Расходы 1000₽"]
     assert payload.warnings == ["Бюджет близко"]
     assert payload.confidence == "high"
-    assert payload.payload_version == 2
+    assert payload.payload_version == 3
 
 
 def test_financial_qa_payload_contains_recommendations_and_state(db_session) -> None:
@@ -148,4 +148,4 @@ def test_financial_qa_payload_contains_recommendations_and_state(db_session) -> 
     assert payload.snapshot is not None
     assert payload.analytics is not None
     assert payload.recommendation_snapshot is not None
-    assert payload.payload_version == 2
+    assert payload.payload_version == 3

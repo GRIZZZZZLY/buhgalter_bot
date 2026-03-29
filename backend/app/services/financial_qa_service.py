@@ -12,6 +12,8 @@ from app.core.settings import get_settings
 from app.services.advisor_intent_router import AdvisorIntent, AdvisorIntentRouter
 from app.services.financial_analytics_service import FinancialAnalyticsService, FinancialAnalyticsSnapshot
 from app.services.financial_snapshot_service import FinancialSnapshot, FinancialSnapshotService
+from app.services.apply_action import ApplyAction
+from app.services.financial_analytics_service import RiskType
 from app.services.recommendation_service import RecommendationService, RecommendationSnapshot
 
 logger = logging.getLogger(__name__)
@@ -35,18 +37,34 @@ _INTENT_TO_MODE: dict[AdvisorIntent, ResponseMode] = {
 }
 
 
+_AGENT_V1_RULES = (
+    "\n\nДополнительные правила Agent v1:\n"
+    "- Если в контексте есть ГЛАВНЫЙ РИСК — обязательно упомяни его в ответе\n"
+    "- Если есть ВОЗМОЖНОСТЬ СЭКОНОМИТЬ — упомяни конкретную сумму\n"
+    "- Поле next_step: одно конкретное действие, не советы в общем\n"
+    "- Поле why_now: одна фраза почему именно сейчас, не «потому что важно»\n"
+    "- Если рисков нет — скажи прямо и не придумывай проблемы\n"
+    "- next_step должен быть выполнимым прямо сейчас\n"
+)
+
+
 @dataclass(frozen=True)
 class AdvisorAnswerPayload:
     answer: str
     basis: list[str]
     warnings: list[str]
     confidence: str
-    payload_version: int = 2
+    payload_version: int = 3
     recommendations: list[str] = field(default_factory=list)
     snapshot: FinancialSnapshot | None = None
     analytics: FinancialAnalyticsSnapshot | None = None
     recommendation_snapshot: RecommendationSnapshot | None = None
     response_mode: ResponseMode = ResponseMode.NORMAL
+    # Agent v1 additions:
+    next_step: str | None = None
+    why_now: str | None = None
+    can_apply: bool = False
+    apply_action: ApplyAction | None = None
 
 
 class FinancialQAService:
@@ -120,17 +138,27 @@ class FinancialQAService:
         if recommendations.primary and recommendations.primary.detail not in computed_basis:
             computed_basis.append(recommendations.primary.detail)
         computed_warnings = list(payload.warnings)
+        primary_rec = recommendations.primary
+        can_apply = (
+            primary_rec is not None
+            and primary_rec.can_apply
+            and primary_rec.apply_action is not None
+        )
         return AdvisorAnswerPayload(
             answer=payload.answer,
             basis=computed_basis[:3],
             warnings=computed_warnings[:3],
             confidence=payload.confidence,
-            payload_version=payload.payload_version,
+            payload_version=3,
             recommendations=self._render_recommendations(recommendations),
             snapshot=snapshot,
             analytics=analytics,
             recommendation_snapshot=recommendations,
             response_mode=mode,
+            next_step=primary_rec.title if primary_rec else None,
+            why_now=primary_rec.why_now if primary_rec else None,
+            can_apply=can_apply,
+            apply_action=primary_rec.apply_action if can_apply else None,
         )
 
     def _payload_from_llm_data(self, data: dict) -> AdvisorAnswerPayload:
@@ -145,7 +173,7 @@ class FinancialQAService:
             basis=basis[:3],
             warnings=warnings[:3],
             confidence=confidence,
-            payload_version=2,
+            payload_version=3,
         )
 
     @staticmethod
@@ -192,7 +220,8 @@ class FinancialQAService:
             "Уже вычисленные рекомендации и риски:\n"
             + "\n".join(f"- {item}" for item in recs_text[:3])
             + f"\n\nФИНАНСОВЫЕ ДАННЫЕ ПОЛЬЗОВАТЕЛЯ:\n{context}\n\n"
-            + "Верни JSON такого вида:\n"
+            + _AGENT_V1_RULES
+            + "\nВерни JSON такого вида:\n"
             + '{"answer":"краткий ответ на русском","basis":["1-3 факта из данных"],"warnings":["0-3 риска или ограничения"],"confidence":"low|medium|high"}\n'
             + "Опирайся только на предоставленные данные и уже вычисленные риски. "
             + "Дай максимум один главный next step. Если данных недостаточно для ответа — скажи об этом."
@@ -256,7 +285,33 @@ class FinancialQAService:
         if intent in {AdvisorIntent.UPCOMING, AdvisorIntent.ADVICE, AdvisorIntent.GENERAL} and snapshot.recurring_payments:
             sections.append("\nРЕГУЛЯРНЫЕ ПЛАТЕЖИ:\n" + self._render_recurring(snapshot))
 
+        agent_block = self._render_agent_v1_block(analytics)
+        if agent_block:
+            sections.append(agent_block)
+
         return "\n".join(sections)
+
+    @staticmethod
+    def _render_agent_v1_block(analytics: FinancialAnalyticsSnapshot) -> str:
+        parts: list[str] = []
+        if analytics.primary_risk_v2 and analytics.primary_risk_v2.risk_type != RiskType.NONE:
+            risk = analytics.primary_risk_v2
+            parts.append(f"\nГЛАВНЫЙ РИСК: {risk.title}\n{risk.detail}")
+        if analytics.saving_opportunity:
+            opp = analytics.saving_opportunity
+            parts.append(
+                f"\nВОЗМОЖНОСТЬ СЭКОНОМИТЬ: категория «{opp.category}»\n"
+                f"Текущий spend: {opp.current_spend:.0f} ₽ · "
+                f"Потенциал: {opp.potential_saving:.0f} ₽/мес"
+            )
+        if analytics.payment_pressure and analytics.payment_pressure.pressure_level != "none":
+            pressure = analytics.payment_pressure
+            parts.append(
+                f"\nПЛАТЁЖНОЕ ДАВЛЕНИЕ: {pressure.pressure_level}\n"
+                f"Ближайшие 14 дней: {pressure.total_upcoming:.0f} ₽ · "
+                f"Баланс: {pressure.available_balance:.0f} ₽"
+            )
+        return "\n".join(parts)
 
     def _fallback_payload(
         self,

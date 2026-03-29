@@ -37,6 +37,10 @@ class FinancialAnalyticsSnapshot:
     forecast: ForecastSnapshot
     budget_health: BudgetHealthSnapshot
     primary_risk: PrimaryRiskSnapshot | None
+    # Agent v1 additions:
+    primary_risk_v2: PrimaryRisk | None = None
+    saving_opportunity: SavingOpportunity | None = None
+    payment_pressure: PaymentPressure | None = None
 
 
 class RiskType(Enum):
@@ -82,10 +86,16 @@ class FinancialAnalyticsService:
         forecast = self.forecast_month_end(snapshot)
         budget_health = self.budget_health_summary(snapshot)
         primary_risk = self.detect_primary_risk(snapshot, forecast, budget_health)
+        primary_risk_v2 = self.detect_primary_risk_v2(snapshot)
+        saving_opportunity = self.top_saving_opportunity(snapshot, snapshot.monthly_stats)
+        payment_pressure = self.upcoming_payment_pressure(snapshot)
         return FinancialAnalyticsSnapshot(
             forecast=forecast,
             budget_health=budget_health,
             primary_risk=primary_risk,
+            primary_risk_v2=primary_risk_v2,
+            saving_opportunity=saving_opportunity,
+            payment_pressure=payment_pressure,
         )
 
     def forecast_month_end(self, snapshot: FinancialSnapshot) -> ForecastSnapshot:
@@ -189,7 +199,7 @@ class FinancialAnalyticsService:
             pct = budget.percent_used
             if pct >= 100:
                 severity = min(1.0, (pct - 100) / 50 + 0.8)
-                overspend = budget.amount * Decimal(str(pct)) / Decimal("100") - budget.amount
+                overspend = budget.spent_amount - budget.limit_amount
                 candidates.append(PrimaryRisk(
                     risk_type=RiskType.BUDGET_OVERRUN,
                     title="Превышен бюджет",
@@ -210,7 +220,7 @@ class FinancialAnalyticsService:
                 ))
 
         forecast = self.forecast_month_end(snapshot)
-        total_budget = sum((b.amount for b in snapshot.budgets), Decimal("0"))
+        total_budget = sum((b.limit_amount for b in snapshot.budgets), Decimal("0"))
         if total_budget > 0 and forecast.projected_expenses > total_budget:
             overrun = forecast.projected_expenses - total_budget
             candidates.append(PrimaryRisk(
@@ -227,14 +237,15 @@ class FinancialAnalyticsService:
 
         today = date.fromisoformat(snapshot.today)
         for planned in snapshot.planned_expenses:
-            days_until = (planned.date - today).days
+            planned_date = date.fromisoformat(planned.planned_date)
+            days_until = (planned_date - today).days
             if 0 <= days_until <= 7 and planned.amount >= Decimal("5000"):
                 candidates.append(PrimaryRisk(
                     risk_type=RiskType.UPCOMING_LARGE,
                     title="Крупный платёж на горизонте",
-                    detail=f"Через {days_until} дн. запланирован платёж на {self._fmt(planned.amount)}: {planned.description}.",
+                    detail=f"Через {days_until} дн. запланирован платёж на {self._fmt(planned.amount)}: {planned.title}.",
                     severity=0.6,
-                    category=None,
+                    category=planned.category,
                     amount=planned.amount,
                 ))
 
@@ -255,7 +266,7 @@ class FinancialAnalyticsService:
     ) -> dict[str, Decimal]:
         totals: dict[str, list[Decimal]] = {}
         for month in monthly_stats:
-            for cat, amount in month.category_spend.items():
+            for cat, amount in month.by_category.items():
                 totals.setdefault(cat, []).append(amount)
         return {
             cat: sum(amounts) / len(amounts)
@@ -270,7 +281,7 @@ class FinancialAnalyticsService:
         avg_spend = self._compute_avg_category_spend(monthly_stats)
         current_spend: dict[str, Decimal] = {}
         if snapshot.monthly_stats:
-            current_spend = dict(snapshot.monthly_stats[0].category_spend)
+            current_spend = dict(snapshot.monthly_stats[0].by_category)
 
         budget_categories = {b.category for b in snapshot.budgets}
         opportunities: list[SavingOpportunity] = []
@@ -313,19 +324,20 @@ class FinancialAnalyticsService:
         critical_3: list[dict] = []
 
         for planned in snapshot.planned_expenses:
-            days_until = (planned.date - today).days
+            planned_date = date.fromisoformat(planned.planned_date)
+            days_until = (planned_date - today).days
             if 0 <= days_until <= 14:
                 upcoming_14.append(planned)
             if 0 <= days_until <= 3:
                 critical_3.append({
-                    "description": planned.description,
+                    "description": planned.title,
                     "amount": float(planned.amount),
-                    "date": planned.date.isoformat(),
+                    "date": planned.planned_date,
                     "days_until": days_until,
                 })
 
         total = sum((p.amount for p in upcoming_14), Decimal("0"))
-        balance = snapshot.balance if snapshot.balance is not None else Decimal("0")
+        balance = snapshot.summary.balance if snapshot.summary.balance is not None else Decimal("0")
 
         if total <= Decimal("0"):
             return PaymentPressure(
