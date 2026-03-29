@@ -35,6 +35,7 @@ from app.telegram.keyboards import (
     advisor_contextual_keyboard,
     advisor_keyboard,
     advisor_session_keyboard,
+    back_keyboard,
     cancel_keyboard,
     category_grid_keyboard,
     category_resolution_keyboard,
@@ -61,6 +62,7 @@ from app.telegram.keyboards import (
     start_keyboard,
     suggestion_keyboard,
     undo_inline_keyboard,
+    undo_keyboard,
     voice_confirmation_keyboard,
     planned_freeform_keyboard,
     recurring_freeform_keyboard,
@@ -76,6 +78,7 @@ def _time_now() -> float:
 
 _ADVISOR_TIMEOUT = 600  # 10 minutes
 _PENDING_ACTION_TTL = 3600  # 1 hour — pending_action expires after this
+_UNDO_TTL = 60  # seconds — window for undoing a reversible action
 _SHOWN_RECOMMENDATIONS_KEY = "shown_recommendation_types"
 _MAX_SESSION_RECOMMENDATIONS = 5
 
@@ -716,6 +719,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(apply_action_handler,  pattern=r"^apply:[^_]"))
     application.add_handler(CallbackQueryHandler(apply_confirm_handler, pattern=r"^apply_confirm:"))
     application.add_handler(CallbackQueryHandler(apply_cancel_handler,  pattern=r"^apply_cancel$"))
+    application.add_handler(CallbackQueryHandler(undo_handler,          pattern=r"^action:undo$"))
     application.add_handler(CallbackQueryHandler(export_callback_handler,   pattern=r"^export:"))
     application.add_handler(CallbackQueryHandler(import_callback_handler,   pattern=r"^import:"))
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
@@ -1017,11 +1021,17 @@ async def apply_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception:
         result = ActionResult(success=False, message="Произошла ошибка при выполнении действия. Попробуйте позже.")
 
-    back_keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("← К советнику", callback_data="nav:advisor"),
-    ]])
+    adv_formatter = AdvisorFormatter()
+    text = adv_formatter.format_action_result(result)
+    if result.success and result.is_reversible:
+        kb = undo_keyboard(result)
+        context.user_data["last_action_result"] = result
+        context.user_data["last_action_ts"] = _time_now()
+    else:
+        kb = back_keyboard()
+
     try:
-        await query.edit_message_text(result.message, reply_markup=back_keyboard, parse_mode="HTML")
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
     except BadRequest:
         pass
 
@@ -1039,6 +1049,70 @@ async def apply_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.pop("pending_action_expires_at", None)
     try:
         await query.edit_message_reply_markup(reply_markup=None)
+    except BadRequest:
+        pass
+
+
+async def undo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle undo button — reverses last action within TTL window."""
+    from app.services.action_service import ActionResult, ActionService, ActionStatus
+
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+
+    last_result = context.user_data.get("last_action_result")
+    last_ts = context.user_data.get("last_action_ts")
+
+    if not last_result or last_ts is None:
+        try:
+            await query.edit_message_text("Нечего отменять.", reply_markup=None)
+        except BadRequest:
+            pass
+        return
+
+    # TTL check
+    if _time_now() - last_ts > _UNDO_TTL:
+        context.user_data.pop("last_action_result", None)
+        context.user_data.pop("last_action_ts", None)
+        try:
+            await query.edit_message_text("Время для отмены истекло (60 сек).", reply_markup=None)
+        except BadRequest:
+            pass
+        return
+
+    if not last_result.undo_payload:
+        try:
+            await query.edit_message_text("Это действие нельзя отменить.", reply_markup=None)
+        except BadRequest:
+            pass
+        return
+
+    telegram_user_id = update.effective_user.id if update.effective_user else None
+    if telegram_user_id is None:
+        return
+
+    try:
+        with SessionLocal() as db:
+            svc = ActionService(db)
+            undo_result = svc.undo(last_result.undo_payload, telegram_user_id)
+    except Exception:
+        undo_result = ActionResult(
+            status=ActionStatus.FAILURE,
+            action_type="undo",
+            message="Ошибка при отмене. Данные не изменены.",
+        )
+
+    # Очищаем — повторный undo невозможен
+    context.user_data.pop("last_action_result", None)
+    context.user_data.pop("last_action_ts", None)
+
+    adv_formatter = AdvisorFormatter()
+    text = adv_formatter.format_action_result(undo_result)
+    kb = back_keyboard()
+    try:
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
     except BadRequest:
         pass
 
