@@ -1402,27 +1402,37 @@ async def import_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     from datetime import date as date_cls
     from app.services.transaction_service import TransactionService
 
+    imported_count = 0
     with SessionLocal() as db:
         _ensure_user(db, update)
         svc = TransactionService(db)
         for row in pending_rows:
-            svc.create_imported(
-                update.effective_user.id,
-                tx_type=str(row["tx_type"]),
-                amount=str(row["amount"]),
-                category=str(row["category"]),
-                description=(str(row["description"]) if row.get("description") else None),
-                source=str(row.get("source") or "text"),
-                raw_input=f"import:{filename}:row:{row['row_number']}",
-                override_date=date_cls.fromisoformat(str(row["created_at"])),
-            )
+            try:
+                svc.create_imported(
+                    update.effective_user.id,
+                    tx_type=str(row["tx_type"]),
+                    amount=str(row["amount"]),
+                    category=str(row["category"]),
+                    description=(str(row["description"]) if row.get("description") else None),
+                    source=str(row.get("source") or "text"),
+                    raw_input=f"import:{filename}:row:{row['row_number']}",
+                    override_date=date_cls.fromisoformat(str(row["created_at"])),
+                )
+                imported_count += 1
+            except Exception as exc:
+                db.rollback()
+                await query.edit_message_text(
+                    f"❌ Импорт остановлен на строке {row['row_number']}: {exc}",
+                    reply_markup=done_keyboard(back_target="nav:menu"),
+                )
+                return
 
     if context.user_data is not None:
         context.user_data.pop("pending_import_rows", None)
         context.user_data.pop("pending_import_filename", None)
 
     await query.edit_message_text(
-        f"✅ Импортировал {len(pending_rows)} записей из {filename}.",
+        f"✅ Импортировал {imported_count} записей из {filename}.",
         reply_markup=done_keyboard(back_target="nav:operations"),
     )
 

@@ -22,7 +22,7 @@ def test_csv_import_preview_parses_export_shape() -> None:
     assert len(preview.importable_rows) == 2
     assert preview.importable_rows[0].category == "food"
     assert preview.importable_rows[1].tx_type == "income"
-    assert preview.importable_rows[1].source == "webapp"
+    assert preview.importable_rows[1].source == "text"
 
 
 def test_xlsx_import_preview_parses_export_shape() -> None:

@@ -106,13 +106,14 @@ class TransactionService:
         raw_input: str | None = None,
         override_date: date | None = None,
     ) -> TransactionItem:
+        safe_source = source if source in {"text", "voice"} else "text"
         data = {
             "telegram_user_id": telegram_user_id,
             "type": tx_type,
             "amount": Decimal(amount),
             "category": category,
             "description": description,
-            "source": source,
+            "source": safe_source,
             "raw_input": raw_input or f"import {tx_type} {amount} {category}",
             "confidence": 1.0,
         }

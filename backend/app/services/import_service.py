@@ -356,8 +356,9 @@ class ImportService:
         normalized = value.strip().lower()
         if normalized in {"voice", "голос", "voice_note"}:
             return "voice"
-        if normalized in {"webapp", "web", "app"}:
-            return "webapp"
+        # Import flow intentionally persists only enum-safe short sources.
+        # "webapp" breaks current DB/source enum storage in production, so
+        # anything non-voice is safely downgraded to text until schema is widened.
         return "text"
 
     @staticmethod
