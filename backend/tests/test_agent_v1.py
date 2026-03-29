@@ -287,7 +287,7 @@ class TestApplyAction:
         action = ApplyAction(
             action_type=ApplyActionType.SET_BUDGET,
             label="Поставить бюджет",
-            payload={"category": "еда", "amount": "12000"},
+            payload={"category": "еда", "suggested_limit": 12000},
             preview_text="Лимит 12 000 ₽",
             is_reversible=True,
         )
@@ -299,7 +299,7 @@ class TestApplyAction:
         action = ApplyAction(
             action_type=ApplyActionType.SET_REMINDER,
             label="Напоминание",
-            payload={"description": "аренда", "remind_date": "2026-03-28", "amount": "30000"},
+            payload={"description": "аренда", "payment_date": "2026-03-28", "amount": 30000},
             preview_text="Напомнить за 2 дня",
             is_reversible=True,
         )
@@ -376,7 +376,7 @@ def test_advisor_payload_with_apply_action() -> None:
     action = ApplyAction(
         action_type=ApplyActionType.SET_BUDGET,
         label="Бюджет 12000",
-        payload={"category": "еда", "amount": "12000"},
+        payload={"category": "еда", "suggested_limit": 12000},
         preview_text="Лимит 12 000 ₽",
         is_reversible=True,
     )
@@ -453,7 +453,7 @@ def test_advisor_apply_keyboard_has_apply_button_when_can_apply_true() -> None:
     action = ApplyAction(
         action_type=ApplyActionType.SET_BUDGET,
         label="Бюджет",
-        payload={"category": "еда", "amount": "10000"},
+        payload={"category": "еда", "suggested_limit": 10000},
         preview_text="Лимит 10 000 ₽",
         is_reversible=True,
     )

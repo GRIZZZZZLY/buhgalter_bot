@@ -40,14 +40,10 @@ def test_set_budget_success(db_session: Session) -> None:
     assert float(budget.amount) == 5000.0
 
 
-def test_set_budget_missing_payload_returns_failure(db_session: Session) -> None:
-    """SET_BUDGET with missing keys in payload returns failure."""
-    action = _make_action(ApplyActionType.SET_BUDGET, {})
-    svc = ActionService(db_session)
-    result = svc.execute(action, telegram_user_id=555)
-
-    assert isinstance(result, ActionResult)
-    assert result.success is False
+def test_set_budget_missing_payload_raises_at_construction(db_session: Session) -> None:
+    """SET_BUDGET with missing keys in payload raises ValueError at construction."""
+    with pytest.raises(ValueError, match="missing payload fields"):
+        _make_action(ApplyActionType.SET_BUDGET, {})
 
 
 def test_set_reminder_creates_planned_expense(db_session: Session) -> None:
@@ -107,7 +103,7 @@ def test_set_total_budget_returns_graceful_failure(db_session: Session) -> None:
     """SET_TOTAL_BUDGET is not implemented — returns graceful failure message."""
     action = _make_action(
         ApplyActionType.SET_TOTAL_BUDGET,
-        {"total_limit": 100000.0},
+        {"amount": 100000.0},
     )
     svc = ActionService(db_session)
     result = svc.execute(action, telegram_user_id=999)
