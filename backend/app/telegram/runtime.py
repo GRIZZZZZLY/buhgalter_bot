@@ -1082,7 +1082,7 @@ async def undo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             pass
         return
 
-    if not last_result.undo_payload:
+    if not (last_result.is_reversible and last_result.undo_payload):
         try:
             await query.edit_message_text("Это действие нельзя отменить.", reply_markup=None)
         except BadRequest:

@@ -44,26 +44,27 @@ async def test_undo_within_ttl_succeeds() -> None:
     )
     query = _make_query()
     update = _make_update(query)
-    ctx = _make_context(last_action_result=last_result, last_ts=9999999999)  # far future = always valid
+    now = 1000000
+    ctx = _make_context(last_action_result=last_result, last_ts=now - 10)  # 10 сек назад — в пределах TTL=60
 
-    with patch("app.telegram.runtime.SessionLocal") as mock_session_cls:
-        mock_db = MagicMock()
-        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
-        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+    with patch("app.telegram.runtime._time_now", return_value=now):
+        with patch("app.telegram.runtime.SessionLocal") as mock_session_cls:
+            mock_db = MagicMock()
+            mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
 
-        with patch("app.services.action_service.ActionService.undo") as mock_undo:
-            mock_undo.return_value = ActionResult(
-                status=ActionStatus.SUCCESS,
-                action_type="set_budget",
-                message="↩ Бюджет «food» удалён",
-            )
-            await undo_handler(update, ctx)
+            with patch("app.services.action_service.ActionService.undo") as mock_undo:
+                mock_undo.return_value = ActionResult(
+                    status=ActionStatus.SUCCESS,
+                    action_type="set_budget",
+                    message="↩ Бюджет «food» удалён",
+                )
+                await undo_handler(update, ctx)
 
     query.edit_message_text.assert_called_once()
     call_args = query.edit_message_text.call_args
     text = call_args.args[0] if call_args.args else call_args.kwargs.get("text", "")
     assert "↩" in text
-    # last_action_result должен быть очищен
     assert "last_action_result" not in ctx.user_data
 
 
