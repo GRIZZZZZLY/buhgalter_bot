@@ -32,7 +32,7 @@ class ActionService:
                 success=False,
                 message="Установка общего бюджета пока не реализована.",
             )
-        return ActionResult(success=False, message=f"Неизвестный тип действия: {action.action_type}")
+        return ActionResult(success=False, message=f"Неизвестный тип действия: {action.action_type.value}")
 
     def _set_budget(self, action: ApplyAction, telegram_user_id: int) -> ActionResult:
         try:
@@ -51,6 +51,7 @@ class ActionService:
         )
 
     def _set_reminder(self, action: ApplyAction, telegram_user_id: int) -> ActionResult:
+        # PlannedExpenseService.create_manual commits internally
         try:
             description: str = action.payload["description"]
             amount: float = float(action.payload["amount"])
@@ -74,6 +75,7 @@ class ActionService:
         )
 
     def _add_planned_expense(self, action: ApplyAction, telegram_user_id: int) -> ActionResult:
+        # PlannedExpenseService.create_manual commits internally
         try:
             title: str = action.payload["title"]
             amount: float = float(action.payload["amount"])

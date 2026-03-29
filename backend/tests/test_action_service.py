@@ -57,7 +57,6 @@ def test_set_reminder_creates_planned_expense(db_session: Session) -> None:
         {
             "description": "Аренда",
             "amount": 30000.0,
-            "remind_date": "2026-04-01",
             "payment_date": "2026-04-03",
         },
     )
