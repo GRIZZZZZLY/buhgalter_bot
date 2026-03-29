@@ -980,8 +980,10 @@ async def apply_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def apply_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Agent v1 stub — shows what will happen in v2 instead of executing."""
+    """Agent v2 — executes pending_action via ActionService."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from app.services.action_service import ActionService
+
     query = update.callback_query
     if query is None:
         return
@@ -995,17 +997,19 @@ async def apply_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
-    text = (
-        f"⏳ <b>{pending_action.label}</b>\n\n"
-        f"Эта функция будет доступна в ближайшем обновлении.\n"
-        f"Сейчас можно сделать вручную:\n\n"
-        f"{pending_action.preview_text}"
-    )
+    telegram_user_id = update.effective_user.id if update.effective_user else None
+    if telegram_user_id is None:
+        return
+
+    with SessionLocal() as db:
+        svc = ActionService(db)
+        result = svc.execute(pending_action, telegram_user_id)
+
     back_keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("← К советнику", callback_data="nav:advisor"),
     ]])
     try:
-        await query.edit_message_text(text, reply_markup=back_keyboard, parse_mode="HTML")
+        await query.edit_message_text(result.message, reply_markup=back_keyboard, parse_mode="HTML")
     except BadRequest:
         pass
 
