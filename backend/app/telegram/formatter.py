@@ -550,3 +550,13 @@ class AdvisorFormatter:
 
     def _render_default(self, payload) -> str:
         return payload.answer or ""
+
+    def format_action_proposal(self, payload) -> str:
+        """Adds next_step + why_now block to advisor answer. Call when next_step is set."""
+        parts = [self.format_for_action_type(payload, None)]
+        if payload.next_step:
+            step_block = f"\n→ <b>{payload.next_step}</b>"
+            if payload.why_now:
+                step_block += f"\n<i>{payload.why_now}</i>"
+            parts.append(step_block)
+        return "\n".join(parts)

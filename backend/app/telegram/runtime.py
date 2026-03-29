@@ -31,6 +31,7 @@ from app.telegram.bot_service import TelegramBotService
 from app.telegram.formatter import AdvisorFormatter, TreasuryFormatter
 from app.telegram.handlers import START_MESSAGE
 from app.telegram.keyboards import (
+    advisor_apply_keyboard,
     advisor_contextual_keyboard,
     advisor_keyboard,
     advisor_session_keyboard,
@@ -74,6 +75,7 @@ def _time_now() -> float:
     return _time.time()
 
 _ADVISOR_TIMEOUT = 600  # 10 minutes
+_PENDING_ACTION_TTL = 3600  # 1 hour — pending_action expires after this
 _SHOWN_RECOMMENDATIONS_KEY = "shown_recommendation_types"
 _MAX_SESSION_RECOMMENDATIONS = 5
 
@@ -711,6 +713,9 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,    pattern=r"^sugg:"))
     application.add_handler(CallbackQueryHandler(advisor_callback_handler, pattern=r"^advisor:"))
     application.add_handler(CallbackQueryHandler(advisor_followup_callback_handler, pattern=r"^advisor_followup:"))
+    application.add_handler(CallbackQueryHandler(apply_action_handler,  pattern=r"^apply:[^_]"))
+    application.add_handler(CallbackQueryHandler(apply_confirm_handler, pattern=r"^apply_confirm:"))
+    application.add_handler(CallbackQueryHandler(apply_cancel_handler,  pattern=r"^apply_cancel$"))
     application.add_handler(CallbackQueryHandler(export_callback_handler,   pattern=r"^export:"))
     application.add_handler(CallbackQueryHandler(import_callback_handler,   pattern=r"^import:"))
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
@@ -860,16 +865,19 @@ async def _answer_advisor_question(
 
     _primary = payload.recommendation_snapshot.primary if payload.recommendation_snapshot else None
     _action_type = _primary.action_type if _primary else None
-    answer = _format_advisor_payload(
-        payload.answer,
-        basis=payload.basis,
-        warnings=payload.warnings,
-        confidence=payload.confidence,
-        recommendations=payload.recommendations,
-        response_mode=payload.response_mode,
-        action_type=_action_type,
-        _payload_obj=payload,
-    )
+    if payload.next_step:
+        answer = AdvisorFormatter().format_action_proposal(payload)
+    else:
+        answer = _format_advisor_payload(
+            payload.answer,
+            basis=payload.basis,
+            warnings=payload.warnings,
+            confidence=payload.confidence,
+            recommendations=payload.recommendations,
+            response_mode=payload.response_mode,
+            action_type=_action_type,
+            _payload_obj=payload,
+        )
 
     context.user_data["last_advisor_snapshot"] = payload.snapshot
     context.user_data["last_advisor_analytics"] = payload.analytics
@@ -880,6 +888,14 @@ async def _answer_advisor_question(
     context.user_data["last_advisor_action_type"] = primary.action_type if primary else None
     if primary:
         _track_shown_recommendation(context, primary.action_type)
+
+    # Store pending_action for "Применить" button (with TTL)
+    if payload.can_apply and payload.apply_action:
+        context.user_data["pending_action"] = payload.apply_action
+        context.user_data["pending_action_expires_at"] = _time_now() + _PENDING_ACTION_TTL
+    else:
+        context.user_data.pop("pending_action", None)
+        context.user_data.pop("pending_action_expires_at", None)
 
     if dialog_mode:
         topic_key = context.user_data.get("last_advisor_action_type") or "general"
@@ -906,23 +922,8 @@ async def _answer_advisor_question(
     else:
         primary = payload.recommendation_snapshot.primary if payload.recommendation_snapshot else None
         action_type = primary.action_type if primary else None
-        # Try to extract a category hint from the primary recommendation detail/title
-        category: str | None = None
-        if primary is not None:
-            detail = getattr(primary, "detail", None) or ""
-            title = getattr(primary, "title", None) or ""
-            # Use first word of detail as category hint, fall back to title
-            for text in (detail, title):
-                if text:
-                    first_word = text.split()[0].lower() if text.split() else None
-                    if first_word:
-                        category = first_word
-                        break
-        reply_markup = advisor_contextual_keyboard(
-            action_type,
-            category=category,
-            recommendation_snapshot=payload.recommendation_snapshot,
-        )
+        category: str | None = primary.category if primary else None
+        reply_markup = advisor_apply_keyboard(payload, action_type=action_type, category=category)
 
     if use_edit:
         try:
@@ -941,6 +942,89 @@ async def _answer_advisor_question(
     await message.reply_text(answer, reply_markup=reply_markup)
 
 
+
+
+async def apply_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show confirm screen for pending_action. Agent v1 — does not execute yet."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+
+    expires_at = context.user_data.get("pending_action_expires_at", 0)
+    if _time_now() > expires_at:
+        context.user_data.pop("pending_action", None)
+        context.user_data.pop("pending_action_expires_at", None)
+        await query.answer("Действие устарело. Задай вопрос заново.", show_alert=True)
+        return
+
+    pending_action = context.user_data.get("pending_action")
+    if not pending_action:
+        await query.answer("Действие устарело. Задай вопрос заново.", show_alert=True)
+        return
+
+    confirm_keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "✅ Подтвердить",
+            callback_data=f"apply_confirm:{pending_action.action_type.value}",
+        ),
+        InlineKeyboardButton("❌ Отмена", callback_data="apply_cancel"),
+    ]])
+    reversible_note = "↩ Можно отменить после выполнения" if pending_action.is_reversible else "⚠️ Действие нельзя отменить"
+    text = f"<b>Подтвердить действие?</b>\n\n{pending_action.preview_text}\n\n{reversible_note}"
+    try:
+        await query.edit_message_text(text, reply_markup=confirm_keyboard, parse_mode="HTML")
+    except BadRequest:
+        pass
+
+
+async def apply_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Agent v1 stub — shows what will happen in v2 instead of executing."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+
+    pending_action = context.user_data.get("pending_action")
+    if not pending_action:
+        try:
+            await query.edit_message_text("Действие устарело.", reply_markup=None)
+        except BadRequest:
+            pass
+        return
+
+    text = (
+        f"⏳ <b>{pending_action.label}</b>\n\n"
+        f"Эта функция будет доступна в ближайшем обновлении.\n"
+        f"Сейчас можно сделать вручную:\n\n"
+        f"{pending_action.preview_text}"
+    )
+    back_keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("← К советнику", callback_data="nav:advisor"),
+    ]])
+    try:
+        await query.edit_message_text(text, reply_markup=back_keyboard, parse_mode="HTML")
+    except BadRequest:
+        pass
+
+    context.user_data.pop("pending_action", None)
+    context.user_data.pop("pending_action_expires_at", None)
+
+
+async def apply_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancel pending_action and return to advisor."""
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer("Отменено.")
+    context.user_data.pop("pending_action", None)
+    context.user_data.pop("pending_action_expires_at", None)
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except BadRequest:
+        pass
 
 
 def _clear_advisor_state(context: ContextTypes.DEFAULT_TYPE) -> None:

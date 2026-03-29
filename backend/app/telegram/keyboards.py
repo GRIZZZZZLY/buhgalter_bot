@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from app.services.recommendation_service import RecommendationSnapshot
@@ -148,6 +150,41 @@ def advisor_contextual_keyboard(
     rows.append([_btn("📥 Скачать отчёт", "export:choose")])
     rows.append(base)
 
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def advisor_apply_keyboard(payload, action_type: str | None = None, category: str | None = None) -> InlineKeyboardMarkup:
+    """Contextual keyboard that prepends '✅ Применить' row when payload.can_apply=True."""
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if payload.can_apply and payload.apply_action:
+        apply_cb = payload.apply_action.to_callback_data()
+        rows.append([
+            _btn("✅ Применить", apply_cb),
+        ])
+
+    contextual_map: dict[str, list[InlineKeyboardButton]] = {
+        "cut_costs": [
+            _btn(
+                f"📊 Разбор категории{' ' + category if category else ''}",
+                f"advisor_followup:category_detail:{category or ''}",
+            ),
+        ],
+        "upcoming_payment": [
+            _btn("📅 Все ближайшие платежи", "advisor_followup:upcoming_all"),
+        ],
+        "review_budget": [
+            _btn("💰 Открыть бюджеты", "nav:budgets"),
+        ],
+        "forecast_control": [
+            _btn("📈 Динамика за 3 месяца", "advisor_followup:trend"),
+        ],
+    }
+    context_buttons = contextual_map.get(action_type or "", [])
+    if context_buttons:
+        rows.append(context_buttons)
+    rows.append([_btn("📥 Скачать отчёт", "export:choose")])
+    rows.append([_btn("← Назад", "nav:advisor"), _btn("≡ Меню", "nav:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
