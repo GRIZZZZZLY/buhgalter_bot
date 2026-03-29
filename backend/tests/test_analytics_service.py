@@ -92,7 +92,7 @@ class TestBudgetReport:
     def test_no_budgets(self, db: Session, user: User) -> None:
         analytics = AnalyticsService(db)
         report = analytics.build_budget_report(user)
-        assert "нет бюджетов" in report
+        assert "не настроены" in report
 
     def test_with_budgets(self, db: Session, user: User) -> None:
         budget_repo = CategoryBudgetRepository(db)

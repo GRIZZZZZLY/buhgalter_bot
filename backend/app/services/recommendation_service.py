@@ -250,16 +250,18 @@ class RecommendationService:
                     why_now=f"Можно сэкономить {float(opportunity.potential_saving):.0f} ₽/мес",
                 )
 
-        if item.action_type == "prepare_payment":
+        if item.action_type == "upcoming_payment":
             from datetime import date as _date
-            today_date = _date.fromisoformat(snapshot.today)
+            today_str = snapshot.today if isinstance(snapshot.today, str) else snapshot.today.isoformat()
+            today_date = _date.fromisoformat(today_str)
             for planned in snapshot.planned_expenses:
-                if planned.description and planned.amount:
-                    days = (planned.date - today_date).days
+                if planned.title and planned.amount:
+                    planned_date = _date.fromisoformat(planned.planned_date)
+                    days = (planned_date - today_date).days
                     if 0 <= days <= 7:
                         apply_action = self._make_apply_action_for_reminder(
-                            planned.description,
-                            planned.date,
+                            planned.title,
+                            planned_date,
                             planned.amount,
                         )
                         return dataclasses.replace(
