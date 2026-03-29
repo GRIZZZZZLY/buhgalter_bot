@@ -182,10 +182,6 @@ class FinancialAnalyticsService:
     def _fmt(value: Decimal) -> str:
         return f"{value.quantize(Decimal('1'), rounding=ROUND_HALF_UP):.0f}₽"
 
-    # ------------------------------------------------------------------ #
-    # New methods added in Sprint A1                                       #
-    # ------------------------------------------------------------------ #
-
     def detect_primary_risk_v2(self, snapshot: FinancialSnapshot) -> PrimaryRisk:
         candidates: list[PrimaryRisk] = []
 
@@ -193,7 +189,7 @@ class FinancialAnalyticsService:
             pct = budget.percent_used
             if pct >= 100:
                 severity = min(1.0, (pct - 100) / 50 + 0.8)
-                overspend = budget.amount * Decimal(str(pct / 100)) - budget.amount
+                overspend = budget.amount * Decimal(str(pct)) / Decimal("100") - budget.amount
                 candidates.append(PrimaryRisk(
                     risk_type=RiskType.BUDGET_OVERRUN,
                     title="Превышен бюджет",
@@ -229,7 +225,7 @@ class FinancialAnalyticsService:
                 amount=overrun,
             ))
 
-        today = date.today()
+        today = date.fromisoformat(snapshot.today)
         for planned in snapshot.planned_expenses:
             days_until = (planned.date - today).days
             if 0 <= days_until <= 7 and planned.amount >= Decimal("5000"):
@@ -295,15 +291,15 @@ class FinancialAnalyticsService:
                     confidence="medium",
                 ))
             elif avg and avg > Decimal("0"):
-                growth = float(spend / avg)
-                if growth >= 1.3:
-                    confidence = "high" if growth >= 1.5 else "medium"
+                growth = spend / avg  # Decimal / Decimal
+                if growth >= Decimal("1.3"):
+                    confidence = "high" if growth >= Decimal("1.5") else "medium"
                     opportunities.append(SavingOpportunity(
                         category=cat,
                         current_spend=spend,
                         suggested_limit=avg.quantize(Decimal("1"), rounding=ROUND_HALF_UP),
                         potential_saving=(spend - avg).quantize(Decimal("1"), rounding=ROUND_HALF_UP),
-                        reason=f"На {(growth - 1) * 100:.0f}% выше среднего",
+                        reason=f"На {float((growth - Decimal('1')) * 100):.0f}% выше среднего",
                         confidence=confidence,
                     ))
 
@@ -312,7 +308,7 @@ class FinancialAnalyticsService:
         return max(opportunities, key=lambda o: o.potential_saving)
 
     def upcoming_payment_pressure(self, snapshot: FinancialSnapshot) -> PaymentPressure:
-        today = date.today()
+        today = date.fromisoformat(snapshot.today)
         upcoming_14: list = []
         critical_3: list[dict] = []
 
@@ -329,7 +325,7 @@ class FinancialAnalyticsService:
                 })
 
         total = sum((p.amount for p in upcoming_14), Decimal("0"))
-        balance = snapshot.balance or Decimal("0")
+        balance = snapshot.balance if snapshot.balance is not None else Decimal("0")
 
         if total <= Decimal("0"):
             return PaymentPressure(
