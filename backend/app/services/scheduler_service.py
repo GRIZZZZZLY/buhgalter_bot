@@ -88,13 +88,31 @@ class SchedulerService:
             replace_existing=True,
             max_instances=1,
         )
+        self.scheduler.add_job(
+            self._cleanup_stale_audio,
+            trigger=IntervalTrigger(hours=1),
+            id="audio_cleanup",
+            replace_existing=True,
+            max_instances=1,
+        )
         self.scheduler.start()
-        logger.info("scheduler started with morning/evening/streak/digest/first-week/recurring/planned jobs")
+        logger.info("scheduler started with morning/evening/streak/digest/first-week/recurring/planned/audio-cleanup jobs")
 
     def stop(self) -> None:
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
             logger.info("scheduler stopped")
+
+    # ------------------------------------------------------------------
+    # Audio cleanup
+    # ------------------------------------------------------------------
+    async def _cleanup_stale_audio(self) -> None:
+        """Delete .ogg/.wav files in runtime/audio/ older than 1 hour."""
+        try:
+            from app.services.audio_file_service import AudioFileService
+            AudioFileService().cleanup_stale_files(max_age_seconds=3600)
+        except Exception:
+            logger.exception("audio cleanup job failed")
 
     # ------------------------------------------------------------------
     # Morning reminders

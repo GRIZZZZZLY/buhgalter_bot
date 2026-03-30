@@ -31,7 +31,13 @@ def _get_whisper_model(model_name: str, device: str, compute_type: str) -> Any:
             "loading WhisperModel: model=%s device=%s compute_type=%s",
             model_name, device, compute_type,
         )
-        _whisper_model_cache[key] = WhisperModel(model_name, device=device, compute_type=compute_type)
+        _whisper_model_cache[key] = WhisperModel(
+            model_name,
+            device=device,
+            compute_type=compute_type,
+            cpu_threads=4,
+            num_workers=2,
+        )
         logger.info("WhisperModel loaded and cached: key=%s", key)
     return _whisper_model_cache[key]
 

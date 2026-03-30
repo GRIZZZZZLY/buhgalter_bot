@@ -53,3 +53,26 @@ class AudioFileService:
                     logger.debug("deleted audio file: %s", path)
             except OSError as exc:
                 logger.warning("failed to delete audio file %s: %s", path, exc)
+
+    def cleanup_stale_files(self, max_age_seconds: int = 3600) -> int:
+        """Delete all .ogg/.wav files in runtime_dir older than max_age_seconds.
+
+        Returns number of files deleted.
+        """
+        import time as _time
+        now = _time.time()
+        deleted = 0
+        for p in self.runtime_dir.glob("*"):
+            if p.suffix not in (".ogg", ".wav"):
+                continue
+            try:
+                age = now - p.stat().st_mtime
+                if age > max_age_seconds:
+                    p.unlink()
+                    deleted += 1
+                    logger.debug("stale audio cleanup: deleted %s (age=%.0fs)", p.name, age)
+            except OSError as exc:
+                logger.warning("stale audio cleanup: failed to delete %s: %s", p, exc)
+        if deleted:
+            logger.info("stale audio cleanup: deleted %d file(s) older than %ds", deleted, max_age_seconds)
+        return deleted

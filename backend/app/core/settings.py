@@ -13,11 +13,11 @@ class Settings(BaseSettings):
     llm_model: str = "llama-3.3-70b-versatile"
     ffmpeg_bin: str = "ffmpeg"
     stt_provider: str = "faster-whisper"
-    whisper_model: str = "base"
+    whisper_model: str = "small"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    whisper_beam_size: int = 5
-    whisper_best_of: int = 5
+    whisper_beam_size: int = 3
+    whisper_best_of: int = 1
     whisper_temperature: float = 0.0
     whisper_initial_prompt: str = "Финансовый ассистент. Русская речь. Возможны категории: еда, продукты, самокат, такси, транспорт, бензин, заправка, зарплата, аванс, клиент, заказ, фриланс."
     whisper_cpp_bin: str = "whisper-cli"
