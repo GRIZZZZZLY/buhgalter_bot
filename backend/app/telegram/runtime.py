@@ -19,6 +19,7 @@ from telegram.ext import (
 
 from app.core.settings import get_settings
 from app.services.scheduler_service import SchedulerService
+from app.telegram.persistence import SQLAlchemyPersistence
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -148,9 +149,11 @@ def build_application() -> Application:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
 
+    persistence = SQLAlchemyPersistence(url=settings.database_url)
     application = (
         Application.builder()
         .token(settings.telegram_bot_token)
+        .persistence(persistence)
         .post_init(on_startup)
         .post_shutdown(on_shutdown)
         .build()
