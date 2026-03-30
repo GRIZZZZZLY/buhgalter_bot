@@ -12,6 +12,7 @@ from app.models.user_category_mapping import UserCategoryMapping  # noqa: F401
 from app.models.category_budget import CategoryBudget  # noqa: F401
 from app.models.recurring_transaction import RecurringTransaction  # noqa: F401
 from app.models.event import Event  # noqa: F401
+from app.models.savings_goal import SavingsGoal  # noqa: F401
 
 settings = get_settings()
 

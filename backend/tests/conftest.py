@@ -18,6 +18,7 @@ from app.models.category_budget import CategoryBudget  # noqa: F401
 from app.models.recurring_transaction import RecurringTransaction  # noqa: F401
 from app.models.planned_expense import PlannedExpense  # noqa: F401
 from app.models.user_category import UserCategory  # noqa: F401
+from app.models.savings_goal import SavingsGoal  # noqa: F401
 from app.telegram.handlers import _pending_store
 
 
