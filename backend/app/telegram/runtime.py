@@ -14,7 +14,6 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
-    SQLAlchemyPersistence,
     filters,
 )
 
@@ -149,11 +148,9 @@ def build_application() -> Application:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
 
-    persistence = SQLAlchemyPersistence(url=settings.database_url)
     application = (
         Application.builder()
         .token(settings.telegram_bot_token)
-        .persistence(persistence)
         .post_init(on_startup)
         .post_shutdown(on_shutdown)
         .build()
