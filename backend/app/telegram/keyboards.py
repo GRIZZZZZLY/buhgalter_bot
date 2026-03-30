@@ -243,6 +243,7 @@ def main_menu_inline_keyboard() -> InlineKeyboardMarkup:
         [_btn("📊 Сводка", "nav:stats")],
         [_btn(MENU_BTN_PLANNED, "nav:planned_input"), _btn(MENU_BTN_RECURRING, "nav:recurring_input")],
         [_btn(MENU_BTN_BUDGETS, "nav:budgets"), _btn(MENU_BTN_CATEGORIES, "nav:categories")],
+        [_btn("🎯 Копилки", "nav:goals")],
         [_btn(MENU_BTN_ADVISOR, "nav:advisor")],
         [_btn(MENU_BTN_SETTINGS, "nav:settings"), _btn(MENU_BTN_HELP, "nav:help")],
     ])

@@ -511,6 +511,15 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if mode == "advisor":
         await _handle_advisor_text(update, context, text.strip())
         return
+    if mode == "goal_create_input":
+        context.user_data.pop("mode", None)
+        await _handle_goal_create_input(update, context, text.strip())
+        return
+    if mode == "goal_deposit_input":
+        context.user_data.pop("mode", None)
+        goal_id = context.user_data.pop("pending_deposit_goal_id", None)
+        await _handle_goal_deposit_input(update, context, text.strip(), goal_id)
+        return
 
     # Handle settings input
     awaiting = context.user_data.get("awaiting_setting") if context.user_data else None
@@ -931,3 +940,73 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="HTML",
         reply_markup=done_keyboard(),
     )
+
+
+async def _handle_goal_create_input(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    """Handle free-form goal creation text after goals:new."""
+    from app.db.session import SessionLocal
+    from app.services.llm_service import LLMService
+    from app.telegram.keyboards import goal_confirm_keyboard, goals_list_keyboard
+    from app.telegram.handlers.common import _ensure_user
+
+    await update.effective_message.reply_text("🤔 Разбираю…")
+    user_id = update.effective_user.id
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        result = LLMService(db).extract_savings_goal(text)
+
+    if result is None:
+        await update.effective_message.reply_text(
+            "Не смог разобрать. Попробуй подробнее, например:\n«iPhone 15 Pro 120000 к декабрю, 10%»",
+            reply_markup=goals_list_keyboard(),
+        )
+        return
+
+    if not result.get("target_amount"):
+        context.user_data["pending_goal"] = result
+        context.user_data["mode"] = "goal_amount_input"
+        await update.effective_message.reply_text(
+            f"🎯 *{result.get('title', 'Новая цель')}*\nСколько нужно накопить (₽)?",
+            parse_mode="Markdown",
+        )
+        return
+
+    title = result.get("title", "Новая цель")
+    amount = result.get("target_amount")
+    deadline = result.get("deadline_iso") or "не задан"
+    auto = result.get("auto_percent")
+    msg = (
+        f"🎯 *{title}*\n"
+        f"Цель: {amount}₽\n"
+        f"Дедлайн: {deadline}\n"
+        f"Авто: {f'{auto}% от каждого дохода' if auto else 'не задан'}"
+    )
+    context.user_data["pending_goal"] = result
+    await update.effective_message.reply_text(msg, parse_mode="Markdown", reply_markup=goal_confirm_keyboard())
+
+
+async def _handle_goal_deposit_input(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, goal_id: str | None) -> None:
+    """Handle amount input for manual goal deposit."""
+    from decimal import Decimal
+    from app.db.session import SessionLocal
+    from app.services.savings_goal_service import SavingsGoalService
+    from app.services.parser_service import ParserService
+    from app.telegram.keyboards import goals_list_keyboard
+    from app.telegram.handlers.common import _ensure_user
+
+    amount = ParserService._extract_amount(text)
+    if amount is None or goal_id is None:
+        await update.effective_message.reply_text("Введи сумму числом, например: 5000")
+        return
+
+    with SessionLocal() as db:
+        _ensure_user(db, update)
+        updated, reached = SavingsGoalService(db).deposit(
+            user_id=update.effective_user.id, goal_id=goal_id, amount=amount
+        )
+    pct = min(100, int(updated.current_amount / updated.target_amount * 100))
+    bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+    msg = f"💰 +{amount}₽ → *{updated.title}*\n{bar} {pct}%\n{updated.current_amount}₽ / {updated.target_amount}₽"
+    if reached:
+        msg += "\n\n🎉 Цель достигнута!"
+    await update.effective_message.reply_text(msg, parse_mode="Markdown", reply_markup=goals_list_keyboard())

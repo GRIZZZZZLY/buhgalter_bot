@@ -123,6 +123,17 @@ async def nav_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 except BadRequest:
                     pass
                 return
+            elif section == "goals":
+                from app.services.savings_goal_service import SavingsGoalService
+                from app.telegram.keyboards import goals_list_keyboard
+                from app.telegram.handlers.savings import _goals_list_text
+                goals = SavingsGoalService(db).list_active(user_id)
+                text = _goals_list_text(goals)
+                try:
+                    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=goals_list_keyboard())
+                except BadRequest:
+                    await update.effective_chat.send_message(text, parse_mode="Markdown", reply_markup=goals_list_keyboard())
+                return
             elif section == "budgets":
                 screen = nav.budgets_screen(user_id)
             elif section == "settings":

@@ -137,6 +137,7 @@ from app.telegram.handlers.transactions import (
     text_message_handler,
 )
 from app.telegram.handlers.voice import voice_message_handler, voice_callback_handler
+from app.telegram.handlers.savings import goals_callback_handler
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +196,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(planned_freeform_callback_handler,   pattern=r"^planned_freeform:"))
     application.add_handler(CallbackQueryHandler(recurring_freeform_callback_handler, pattern=r"^recurring_freeform:"))
     application.add_handler(CallbackQueryHandler(catfix_callback_handler,             pattern=r"^catfix:"))
+    application.add_handler(CallbackQueryHandler(goals_callback_handler,             pattern=r"^goals:"))
     application.add_handler(CallbackQueryHandler(categories_callback_handler,         pattern=r"^categories:"))
     application.add_handler(CallbackQueryHandler(sugg_callback_handler,               pattern=r"^sugg:"))
     application.add_handler(CallbackQueryHandler(advisor_callback_handler,            pattern=r"^advisor:"))
