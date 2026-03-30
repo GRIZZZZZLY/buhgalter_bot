@@ -10,6 +10,10 @@ from app.telegram.keyboards import (
     budget_confirm_keyboard,
     budget_cat_confirm_keyboard,
     settings_nav_inline_keyboard,
+    goals_list_keyboard,
+    goal_confirm_keyboard,
+    goal_deposit_keyboard,
+    goal_settings_keyboard,
 )
 
 
@@ -95,3 +99,36 @@ def test_settings_nav_keyboard_has_budget_day_and_reminders() -> None:
     callbacks = _all_callbacks(settings_nav_inline_keyboard())
     assert "settings:budget_day" in callbacks
     assert "settings:reminders" in callbacks
+
+
+# ---------------------------------------------------------------------------
+# Savings Goal keyboards
+# ---------------------------------------------------------------------------
+
+
+def test_goals_list_keyboard_has_new_goal_and_menu() -> None:
+    kb = goals_list_keyboard()
+    callbacks = _all_callbacks(kb)
+    assert "goals:new" in callbacks
+    assert "nav:menu" in callbacks
+
+
+def test_goal_confirm_keyboard_has_confirm_and_cancel() -> None:
+    kb = goal_confirm_keyboard()
+    callbacks = _all_callbacks(kb)
+    assert "goals:confirm" in callbacks
+    assert "goals:cancel" in callbacks
+
+
+def test_goal_deposit_keyboard_has_deposit_and_back() -> None:
+    kb = goal_deposit_keyboard("test-goal-id")
+    callbacks = _all_callbacks(kb)
+    assert "goals:deposit:test-goal-id" in callbacks
+    assert "nav:goals" in callbacks
+
+
+def test_goal_settings_keyboard_has_complete_and_back() -> None:
+    kb = goal_settings_keyboard("test-goal-id")
+    callbacks = _all_callbacks(kb)
+    assert "goals:complete:test-goal-id" in callbacks
+    assert "goals:nav:test-goal-id" in callbacks

@@ -1009,3 +1009,36 @@ def back_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton("≡ Меню", callback_data="nav:menu"),
     ]])
 
+
+# ---------------------------------------------------------------------------
+# Savings Goal keyboards
+# ---------------------------------------------------------------------------
+
+
+def goals_list_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [_btn("🎯 Новая цель", "goals:new")],
+        [_menu_btn()],
+    ])
+
+
+def goal_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [_btn("✅ Создать", "goals:confirm"), _btn("✏️ Изменить", "goals:edit")],
+        [_btn("❌ Отмена", "goals:cancel")],
+    ])
+
+
+def goal_deposit_keyboard(goal_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [_btn("💰 Пополнить", f"goals:deposit:{goal_id}")],
+        [_btn("⚙️ Настроить", f"goals:settings:{goal_id}"), _btn("◀️ Назад", "nav:goals")],
+    ])
+
+
+def goal_settings_keyboard(goal_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [_btn("✅ Завершить", f"goals:complete:{goal_id}")],
+        [_btn("◀️ Назад", f"goals:nav:{goal_id}")],
+    ])
+
