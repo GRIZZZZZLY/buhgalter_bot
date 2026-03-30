@@ -296,6 +296,8 @@ class TelegramTextFlow:
             payload["voice_log_id"] = str(result.voice_log_id)
         if result.transcript is not None:
             payload["transcript"] = result.transcript
+        if result.parsed_items:
+            payload["parsed_items"] = result.parsed_items
         if getattr(result, 'raw_category', None) is not None:
             payload['raw_category'] = result.raw_category
         if getattr(result, 'suggestions', None):

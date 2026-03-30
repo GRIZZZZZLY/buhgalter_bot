@@ -160,6 +160,11 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     reply_markup=planned_freeform_keyboard(),
                     parse_mode="HTML",
                 )
+        else:
+            try:
+                await placeholder.edit_text("❌ Не удалось разобрать планируемую трату. Попробуй текстом.", reply_markup=done_keyboard())
+            except BadRequest:
+                pass
         return
 
     if action == "recurring_confirm":
@@ -179,6 +184,11 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     reply_markup=recurring_freeform_keyboard(),
                     parse_mode="HTML",
                 )
+        else:
+            try:
+                await placeholder.edit_text("❌ Не удалось разобрать регулярный платёж. Попробуй текстом.", reply_markup=done_keyboard())
+            except BadRequest:
+                pass
         return
 
     if action == "clarify_category_choice":
