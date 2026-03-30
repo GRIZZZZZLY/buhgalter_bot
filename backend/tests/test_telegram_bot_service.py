@@ -321,3 +321,16 @@ def test_bot_service_deactivates_recurring_rule(db_session) -> None:
 
     assert response["action"] == "recurring_deleted"
     assert "отключ" in response["message"].lower()
+
+
+def test_savings_deposit_text_routes_to_goal(db_session) -> None:
+    """'Положил 3000 в копилку' must route to savings deposit, not transaction."""
+    from app.services.savings_goal_service import SavingsGoalService
+    goal_service = SavingsGoalService(db_session)
+    goal_service.create(user_id=555, title="Отпуск", target_amount=Decimal("50000"))
+
+    service = TelegramBotService(db_session)
+    response = service.process_text_message(
+        telegram_user_id=555, text="положил в копилку 3000 на отпуск"
+    )
+    assert response["action"] in ("savings_deposited", "savings_clarify")

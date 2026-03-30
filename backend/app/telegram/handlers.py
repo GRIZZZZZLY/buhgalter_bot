@@ -130,6 +130,10 @@ class TelegramTextFlow:
                 payload["parsed_items"] = voice_edit.parsed_items
             return payload
 
+        # Savings deposit detection — check before question and parser
+        if self._looks_like_savings_deposit(normalized_text):
+            return self._handle_savings_deposit(telegram_user_id, normalized_text)
+
         # Question shortcut: route financial questions directly to QA service
         if self._looks_like_question(normalized_text):
             answer = FinancialQAService(self.db).answer(normalized_text, telegram_user_id)
@@ -475,6 +479,48 @@ class TelegramTextFlow:
                 continue
             lines.append(stripped)
         return " ".join(lines).strip()
+
+    @staticmethod
+    def _looks_like_savings_deposit(text: str) -> bool:
+        keywords = [
+            "положил в копилку", "пополнил копилку", "пополнил цель",
+            "отложил в копилку", "добавил в копилку", "в копилку",
+            "на копилку", "накопил",
+        ]
+        t = text.lower()
+        return any(kw in t for kw in keywords)
+
+    def _handle_savings_deposit(self, telegram_user_id: int, text: str) -> dict[str, object]:
+        from app.services.savings_goal_service import SavingsGoalService
+        amount = self.parser_service._extract_amount(text)
+        if amount is None:
+            return {"action": "savings_clarify", "message": "💰 Сколько кладём в копилку?"}
+
+        goal, confidence = SavingsGoalService(self.db).fuzzy_find(telegram_user_id, text)
+        if goal is None:
+            return {"action": "savings_clarify", "message": "🎯 Укажи цель — на что копишь?"}
+
+        if confidence < 0.8:
+            return {
+                "action": "savings_clarify",
+                "message": f'🎯 Уточни: имеешь в виду "{goal.title}"?',
+                "goal_id": goal.id,
+                "amount": str(amount),
+            }
+
+        updated, reached = SavingsGoalService(self.db).deposit(
+            user_id=telegram_user_id, goal_id=goal.id, amount=amount
+        )
+        progress = int(updated.current_amount / updated.target_amount * 100)
+        bar = "█" * (progress // 10) + "░" * (10 - progress // 10)
+        msg = (
+            f"💰 +{amount}₽ → {goal.title}\n"
+            f"{bar} {progress}%\n"
+            f"Накоплено: {updated.current_amount}₽ из {updated.target_amount}₽"
+        )
+        if reached:
+            msg += "\n\n🎉 Цель достигнута!"
+        return {"action": "savings_deposited", "message": msg, "goal_id": goal.id}
 
     @staticmethod
     def _looks_like_question(text: str) -> bool:
