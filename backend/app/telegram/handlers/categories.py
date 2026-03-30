@@ -5,6 +5,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app.db.session import SessionLocal
+from app.repositories.event_repository import log_event
 from app.telegram.bot_service import TelegramBotService
 from app.telegram.keyboards import (
     category_grid_keyboard,
@@ -65,6 +66,7 @@ async def catfix_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         with SessionLocal() as db:
             svc = TelegramBotService(db)
             result = svc.handle_category_correction(user_id, tx_id, slug)
+        log_event(user_id, "catfix_applied")
         await query.edit_message_text(result["message"], parse_mode="HTML", reply_markup=done_keyboard())
         return
 

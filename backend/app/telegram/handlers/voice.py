@@ -9,6 +9,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app.db.session import SessionLocal
+from app.repositories.event_repository import log_event
 from app.repositories.user_repository import UserRepository
 from app.telegram.bot_service import TelegramBotService
 from app.telegram.handlers.common import (
@@ -40,6 +41,7 @@ async def voice_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text("Не нашёл voice payload.", reply_markup=done_keyboard())
         return
 
+    log_event(update.effective_user.id, "voice_input", source="voice")
     placeholder = await update.effective_message.reply_text("🎤 Обрабатываю голосовое…")
 
     logger.info("voice message received: user=%s file_id=%s", update.effective_user.id, voice.file_id)

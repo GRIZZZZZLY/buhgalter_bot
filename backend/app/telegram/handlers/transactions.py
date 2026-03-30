@@ -6,6 +6,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app.db.session import SessionLocal
+from app.repositories.event_repository import log_event
 from app.repositories.user_repository import UserRepository
 from app.telegram.bot_service import TelegramBotService
 from app.telegram.formatter import TreasuryFormatter
@@ -127,6 +128,7 @@ async def undo_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 pass
 
     if deleted_count > 0:
+        log_event(update.effective_user.id, "undo_used")
         suffix = f" ({deleted_count} записи)" if deleted_count > 1 else ""
         await query.edit_message_text(f"↩ Отменено{suffix}.", reply_markup=done_keyboard())
     else:
@@ -808,6 +810,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             today_str = datetime.now(tz).date().isoformat()
             user_repo.increment_transactions_today(user, today_str)
             db.commit()
+            log_event(update.effective_user.id, "tx_added", source="text")
 
             saved_category = response.get("saved_category")
             if saved_category:

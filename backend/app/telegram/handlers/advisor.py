@@ -5,6 +5,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app.db.session import SessionLocal
+from app.repositories.event_repository import log_event
 from app.services.financial_qa_service import FinancialQAService, ResponseMode
 from app.telegram.formatter import AdvisorFormatter, TreasuryFormatter
 from app.telegram.keyboards import (
@@ -438,6 +439,7 @@ async def undo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log_event(update.effective_user.id, "advisor_open")
     question = " ".join(context.args).strip() if context.args else ""
     if not question:
         await _enter_advisor_mode(update, context)

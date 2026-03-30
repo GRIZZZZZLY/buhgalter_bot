@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes
 
 from app.core.settings import get_settings
 from app.db.session import SessionLocal
+from app.repositories.event_repository import log_event
 from app.repositories.user_repository import UserRepository
 from app.telegram.bot_service import TelegramBotService
 from app.telegram.formatter import TreasuryFormatter
@@ -28,6 +29,7 @@ _onboarding = OnboardingFlow()
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with SessionLocal() as db:
         _ensure_user(db, update)
+    log_event(update.effective_user.id, "bot_start")
 
     # Start onboarding for new users (step key not yet set)
     if context.user_data is not None and context.user_data.get(ONBOARDING_STEP_KEY) is None:
