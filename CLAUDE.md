@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## North Star Metric
+
+**NSM = % пользователей, вернувшихся на 3-й день подряд (3-day streak)**
+
+Когда пользователь формирует привычку ежедневного ввода — бот становится частью его финансовой рутины и растёт через retention. Все продуктовые решения проверяем вопросом: "Это помогает пользователю вернуться завтра?"
+
 ## Проект
 
 Telegram-first персональный финансовый бот с голосовым вводом и WebApp-дашбордом. Монорепозиторий: `backend/` (FastAPI + python-telegram-bot) и `src/` (React 19 + Vite, Telegram WebApp).
