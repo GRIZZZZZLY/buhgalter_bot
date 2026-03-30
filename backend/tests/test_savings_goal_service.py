@@ -120,3 +120,36 @@ def test_service_process_income_distributes(db_session) -> None:
     deposited = {r[0].title: r[1] for r in results}
     assert deposited["Цель А"] == Decimal("1000.00")
     assert deposited["Цель Б"] == Decimal("500.00")
+
+
+# --- LLMService.extract_savings_goal tests ---
+
+from unittest.mock import MagicMock, patch
+from app.services.llm_service import LLMService
+
+
+def test_llm_extract_savings_goal(db_session) -> None:
+    service = LLMService(db_session)
+    fake_response = MagicMock()
+    fake_response.choices[0].message.content = (
+        '{"title": "iPhone 14 Pro", "target_amount": 120000, '
+        '"deadline_iso": "2026-12-01", "auto_percent": 10}'
+    )
+    with patch.object(service._client.chat.completions, "create", return_value=fake_response):
+        result = service.extract_savings_goal("хочу накопить на iPhone 120к к декабрю, 10%")
+    assert result is not None
+    assert result["title"] == "iPhone 14 Pro"
+    assert result["target_amount"] == 120000
+    assert result["auto_percent"] == 10
+
+
+def test_llm_extract_savings_goal_missing_amount_returns_none_amount(db_session) -> None:
+    service = LLMService(db_session)
+    fake_response = MagicMock()
+    fake_response.choices[0].message.content = (
+        '{"title": "Отпуск", "target_amount": null, "deadline_iso": null, "auto_percent": null}'
+    )
+    with patch.object(service._client.chat.completions, "create", return_value=fake_response):
+        result = service.extract_savings_goal("хочу накопить на отпуск")
+    assert result is not None
+    assert result["target_amount"] is None

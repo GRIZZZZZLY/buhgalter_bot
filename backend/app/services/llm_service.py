@@ -203,6 +203,41 @@ class LLMService:
             logger.error("extract_recurring error: %s", exc)
             return None
 
+    def extract_savings_goal(self, text: str) -> dict | None:
+        """Extract savings goal fields from free-form text.
+
+        Returns dict with keys: title, target_amount, deadline_iso, auto_percent.
+        target_amount may be None if not mentioned — caller must prompt user.
+        Returns None on LLM error.
+        """
+        today = date.today().isoformat()
+        system = (
+            f"Ты ассистент для извлечения данных. Сегодня {today}.\n"
+            "Извлеки параметры цели накопления из текста.\n"
+            'Верни JSON: {"title": str, "target_amount": float | null, '
+            '"deadline_iso": str | null, "auto_percent": int | null}\n'
+            "title: название цели (вещь или событие).\n"
+            "target_amount: сумма накопления, null если не указана.\n"
+            'deadline_iso: дата ISO "YYYY-MM-DD", null если не упомянута.\n'
+            "auto_percent: процент от дохода (0-100), null если не указан.\n"
+            "Если тип не ясен — используй null."
+        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": text},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+            raw = response.choices[0].message.content or ""
+            return json.loads(raw)
+        except Exception as exc:
+            logger.error("extract_savings_goal error: %s", exc)
+            return None
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
