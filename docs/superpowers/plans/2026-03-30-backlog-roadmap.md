@@ -36,18 +36,13 @@
 
 ## 1–2 МЕСЯЦА
 
-### 3. HMAC-верификация Telegram initData
-- **Файл:** `backend/app/api/deps.py`
-- **Что:** проверять подпись `initData` через HMAC-SHA256 с bot token
-- **Риск:** без верификации любой может подделать `X-Telegram-User-Id` → WebApp небезопасен в prod
-- **Блокирует:** публичный релиз WebApp
-- **Связанный дизайн:** нет, нужно создать
+### ✅ 3. HMAC-верификация Telegram initData
+- Реализовано в `backend/app/api/deps.py` — `_verify_telegram_init_data()` + `get_telegram_user_id()`
+- Prod требует `X-Telegram-Init-Data` с HMAC-SHA256, dev fallback через `TELEGRAM_BOT_TOKEN` empty check
 
-### 4. Убрать захардкоженный user_id в WebApp
-- **Файл:** `src/lib/api-client.ts`
-- **Что:** заменить `555502880` на `Telegram.WebApp.initDataUnsafe.user?.id`
-- **Зависит от:** задача #3 (HMAC) должна быть готова первой
-- **Риск:** в dev без Telegram-контекста нужен fallback
+### ✅ 4. Убрать захардкоженный user_id в WebApp
+- Реализовано в `src/lib/api-client.ts` + `src/lib/telegram.ts`
+- `getInitData()` читает `initDataRaw` через `@tma.js/sdk-react`, dev fallback через `VITE_DEV_USER_ID`
 
 ### 5. Определить NSM (North Star Metric)
 - **Что:** одно предложение — "Наш NSM = X, потому что когда пользователь достигает Y, мы растём"
