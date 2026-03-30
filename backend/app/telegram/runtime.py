@@ -61,6 +61,7 @@ from app.telegram.keyboards import (
     settings_nav_inline_keyboard,
     start_keyboard,
     suggestion_keyboard,
+    help_topic_keyboard,
     undo_inline_keyboard,
     undo_keyboard,
     voice_confirmation_keyboard,
@@ -725,6 +726,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(budget_callback_handler,  pattern=r"^budget:"))
     application.add_handler(CallbackQueryHandler(reset_callback_handler,   pattern=r"^reset:"))
     application.add_handler(CallbackQueryHandler(onboarding_callback_handler, pattern=r"^onboarding:"))
+    application.add_handler(CallbackQueryHandler(help_topic_callback_handler,    pattern=r"^help:topic:"))
     application.add_handler(CallbackQueryHandler(clarify_intent_callback_handler, pattern=r"^clarify:"))
     application.add_handler(MessageHandler(filters.VOICE, voice_message_handler))
     application.add_handler(MessageHandler(filters.Document.ALL, document_message_handler))
@@ -2523,6 +2525,40 @@ async def recurring_freeform_callback_handler(update: Update, context: ContextTy
 
 # ---------------------------------------------------------------------------
 # Intent clarification callback (clarify:transaction / planned / recurring / cancel)
+# ---------------------------------------------------------------------------
+# help:topic:* — описание отдельных функций из раздела Помощь
+# ---------------------------------------------------------------------------
+
+_HELP_TOPIC_TEXTS = {
+    "input":   lambda: formatter.format_help_topic_input(),
+    "voice":   lambda: formatter.format_help_topic_voice(),
+    "summary": lambda: formatter.format_help_topic_summary(),
+    "budget":  lambda: formatter.format_help_topic_budget(),
+    "advisor": lambda: formatter.format_help_topic_advisor(),
+}
+
+
+async def help_topic_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+
+    topic = query.data.split(":")[2] if len(query.data.split(":")) > 2 else ""
+    text_fn = _HELP_TOPIC_TEXTS.get(topic)
+    if text_fn is None:
+        return
+
+    try:
+        await query.edit_message_text(text_fn(), reply_markup=help_topic_keyboard(), parse_mode="Markdown")
+    except BadRequest as exc:
+        logger.debug("help topic edit failed (%s), sending new message", exc)
+        await update.effective_chat.send_message(text_fn(), reply_markup=help_topic_keyboard(), parse_mode="Markdown")
+
+
 # ---------------------------------------------------------------------------
 
 async def clarify_intent_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

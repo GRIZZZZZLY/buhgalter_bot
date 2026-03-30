@@ -599,10 +599,15 @@ def reminders_inline_keyboard() -> InlineKeyboardMarkup:
 
 def help_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [_btn("📊 Сводка", "nav:stats"), _btn("💰 Бюджеты", "nav:budgets")],
-        [_btn("🤖 Советник", "nav:advisor"), _btn("📅 Планирование", "nav:planned_input")],
+        [_btn("💸 Как записать трату", "help:topic:input"), _btn("🎤 Голосовой ввод", "help:topic:voice")],
+        [_btn("📊 Сводка", "help:topic:summary"), _btn("💰 Бюджеты", "help:topic:budget")],
+        [_btn("🤖 Советник", "help:topic:advisor")],
         [_back_btn()],
     ])
+
+
+def help_topic_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[_back_btn("nav:help")]])
 
 
 # ---------------------------------------------------------------------------
