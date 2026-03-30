@@ -12,6 +12,7 @@ from app.schemas.transaction import TransactionCreateRequest, TransactionItem, T
 
 class TransactionService:
     def __init__(self, db: Session) -> None:
+        self.db = db
         self.repository = TransactionRepository(db)
 
     def build_create_payload(self, telegram_user_id: int, source: str, parsed: ParseResult) -> dict:
@@ -40,6 +41,12 @@ class TransactionService:
             # Store as end-of-day UTC so it falls within the correct calendar day
             payload["created_at"] = datetime.combine(override_date, time(23, 59, 59), tzinfo=timezone.utc)
         transaction = self.repository.create(payload)
+
+        # Auto-deduct into savings goals on income
+        if transaction.type == "income":
+            from app.services.savings_goal_service import SavingsGoalService
+            SavingsGoalService(self.db).process_income(telegram_user_id, transaction.amount)
+
         return self._to_item(transaction)
 
     def list_transactions(self, telegram_user_id: int, limit: int, offset: int, period: str) -> list[TransactionItem]:

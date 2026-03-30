@@ -1,7 +1,34 @@
+from decimal import Decimal
+
 from app.services.parser_service import ParserService
 from app.services.transaction_service import TransactionService
 from app.telegram.handlers import TelegramTextFlow
 from app.schemas.transaction import TransactionUpdateRequest
+
+
+def test_income_triggers_savings_auto_deduction(db_session) -> None:
+    """Creating an income transaction must auto-deposit into savings goals."""
+    from app.schemas.parser import ParseResult
+    from app.services.savings_goal_service import SavingsGoalService
+
+    goal_service = SavingsGoalService(db_session)
+    goal_service.create(
+        user_id=555, title="Отпуск", target_amount=Decimal("50000"), auto_percent=10
+    )
+
+    tx_service = TransactionService(db_session)
+    tx_service.create_from_parse(
+        telegram_user_id=555,
+        source="text",
+        parsed=ParseResult(
+            matched=True, confidence=0.95, confidence_label="high",
+            transaction_type="income", amount=Decimal("30000"),
+            category="salary", description=None, pattern="test", raw_input="зп 30000",
+        ),
+    )
+
+    updated_goals = goal_service.list_active(user_id=555)
+    assert updated_goals[0].current_amount == Decimal("3000.00")
 
 
 def test_create_transaction_and_summary(db_session) -> None:
