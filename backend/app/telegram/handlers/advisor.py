@@ -6,7 +6,8 @@ from telegram.ext import ContextTypes
 
 from app.db.session import SessionLocal
 from app.repositories.event_repository import log_event
-from app.services.financial_qa_service import FinancialQAService, ResponseMode, _cat_ru
+from app.core.category_labels import cat_label
+from app.services.financial_qa_service import FinancialQAService, ResponseMode
 from app.telegram.formatter import AdvisorFormatter, TreasuryFormatter
 from app.telegram.keyboards import (
     advisor_apply_keyboard,
@@ -505,8 +506,7 @@ async def advisor_followup_callback_handler(update: Update, context: ContextType
     if action.startswith("category_detail:"):
         category = action.removeprefix("category_detail:").strip()
         if category:
-            category_ru = _cat_ru(category)
-            question = f"Подробно расскажи о моих расходах в категории {category_ru}: сколько трачу, динамика, советы по оптимизации."
+            question = f"Подробно расскажи о моих расходах в категории {cat_label(category)}: сколько трачу, динамика, советы по оптимизации."
         else:
             question = "Подробно расскажи о структуре моих расходов по категориям."
     elif action == "upcoming_all":

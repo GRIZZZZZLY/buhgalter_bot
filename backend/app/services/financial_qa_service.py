@@ -9,6 +9,7 @@ from openai import APIError, OpenAI
 from sqlalchemy.orm import Session
 
 from app.core.settings import get_settings
+from app.core.category_labels import cat_label, cat_ru
 from app.services.advisor_intent_router import AdvisorIntent, AdvisorIntentRouter
 from app.services.financial_analytics_service import FinancialAnalyticsService, FinancialAnalyticsSnapshot
 from app.services.financial_snapshot_service import FinancialSnapshot, FinancialSnapshotService
@@ -19,34 +20,12 @@ from app.services.recommendation_service import RecommendationService, Recommend
 logger = logging.getLogger(__name__)
 _FALLBACK = "Не смог получить ответ — попробуй чуть позже."
 
-_CATEGORY_RU: dict[str, str] = {
-    "food": "Еда",
-    "transport": "Транспорт",
-    "housing": "Жильё",
-    "health": "Здоровье",
-    "beauty": "Красота",
-    "entertainment": "Развлечения",
-    "subscriptions": "Подписки",
-    "shopping": "Покупки",
-    "home": "Дом",
-    "telecom": "Связь",
-    "work": "Работа",
-    "education": "Обучение",
-    "gifts": "Подарки",
-    "fees": "Комиссии",
-    "salary": "Зарплата",
-    "freelance": "Фриланс",
-    "bonus": "Премии",
-    "transfer": "Переводы",
-    "refund": "Возвраты",
-    "other_income": "Прочий доход",
-    "other": "Прочее",
-}
-
-
 def _cat_ru(slug: str) -> str:
-    """Translate category slug to Russian name."""
-    return _CATEGORY_RU.get(slug, slug)
+    return cat_ru(slug)
+
+
+def _cat_label(slug: str) -> str:
+    return cat_label(slug)
 
 
 class ResponseMode(Enum):
@@ -329,7 +308,7 @@ class FinancialQAService:
         if analytics.saving_opportunity:
             opp = analytics.saving_opportunity
             parts.append(
-                f"\nВОЗМОЖНОСТЬ СЭКОНОМИТЬ: категория «{_cat_ru(opp.category)}»\n"
+                f"\nВОЗМОЖНОСТЬ СЭКОНОМИТЬ: категория «{_cat_label(opp.category)}»\n"
                 f"Текущий spend: {opp.current_spend:.0f} ₽ · "
                 f"Потенциал: {opp.potential_saving:.0f} ₽/мес"
             )
@@ -375,7 +354,7 @@ class FinancialQAService:
             risky = [item for item in snapshot.budgets if item.warning]
             if risky:
                 parts = [
-                    f"{_cat_ru(item.category)} — {item.percent_used}% ({item.spent_amount:.0f}/{item.limit_amount:.0f}₽)"
+                    f"{_cat_label(item.category)} — {item.percent_used}% ({item.spent_amount:.0f}/{item.limit_amount:.0f}₽)"
                     for item in risky[:3]
                 ]
                 warnings = ["Категории выше 90% бюджета уже близки к перерасходу."]
@@ -593,14 +572,14 @@ class FinancialQAService:
     @staticmethod
     def _render_categories(snapshot: FinancialSnapshot) -> str:
         return "\n".join(
-            f"  {_cat_ru(item.category)}: {item.amount:.2f}₽" for item in snapshot.top_categories
+            f"  {_cat_label(item.category)}: {item.amount:.2f}₽" for item in snapshot.top_categories
         ) or "  нет расходов"
 
     @staticmethod
     def _render_recent(snapshot: FinancialSnapshot) -> str:
         return "\n".join(
             (
-                f"  {item.date_label} {item.transaction_type} {item.amount}₽ [{_cat_ru(item.category)}]"
+                f"  {item.date_label} {item.transaction_type} {item.amount}₽ [{_cat_label(item.category)}]"
                 + (f" — {item.description}" if item.description else "")
             )
             for item in snapshot.recent_transactions
@@ -611,7 +590,7 @@ class FinancialQAService:
         lines: list[str] = []
         for item in snapshot.monthly_stats:
             cat_str = ", ".join(
-                f"{_cat_ru(category)}: {amount:.0f}₽" for category, amount in item.by_category.items()
+                f"{_cat_label(category)}: {amount:.0f}₽" for category, amount in item.by_category.items()
             )
             lines.append(
                 f"  {item.year_month}: доходы {item.income:.0f}₽, расходы {item.expenses:.0f}₽"
@@ -623,7 +602,7 @@ class FinancialQAService:
     def _render_budgets(snapshot: FinancialSnapshot) -> str:
         return "\n".join(
             (
-                f"  {_cat_ru(item.category)}: {item.limit_amount:.0f}₽/мес, потрачено {item.spent_amount:.0f}₽ "
+                f"  {_cat_label(item.category)}: {item.limit_amount:.0f}₽/мес, потрачено {item.spent_amount:.0f}₽ "
                 f"({item.percent_used}%)" + (" ⚠️" if item.warning else "")
             )
             for item in snapshot.budgets

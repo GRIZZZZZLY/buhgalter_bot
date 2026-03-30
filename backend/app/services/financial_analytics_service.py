@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 
+from app.core.category_labels import cat_label
 from app.services.financial_snapshot_service import FinancialSnapshot, MonthlyStatsSnapshot
 
 
@@ -140,7 +141,7 @@ class FinancialAnalyticsService:
             category = budget_health.overheated_categories[0]
             return PrimaryRiskSnapshot(
                 title="budget_overrun",
-                detail=f"Категория {category} уже вышла за лимит.",
+                detail=f"Категория {cat_label(category)} уже вышла за лимит.",
                 severity="high",
             )
 
@@ -148,7 +149,7 @@ class FinancialAnalyticsService:
             category = budget_health.risky_categories[0]
             return PrimaryRiskSnapshot(
                 title="budget_risk",
-                detail=f"Категория {category} уже близко к перерасходу.",
+                detail=f"Категория {cat_label(category)} уже близко к перерасходу.",
                 severity="medium",
             )
 
@@ -175,7 +176,7 @@ class FinancialAnalyticsService:
             item = snapshot.top_categories[0]
             return PrimaryRiskSnapshot(
                 title="top_category_pressure",
-                detail=f"Самая тяжёлая категория сейчас — {item.category} ({self._fmt(item.amount)}).",
+                detail=f"Самая тяжёлая категория сейчас — {cat_label(item.category)} ({self._fmt(item.amount)}).",
                 severity="low",
             )
 
@@ -203,7 +204,7 @@ class FinancialAnalyticsService:
                 candidates.append(PrimaryRisk(
                     risk_type=RiskType.BUDGET_OVERRUN,
                     title="Превышен бюджет",
-                    detail=f"Категория «{budget.category}» вышла за лимит на {self._fmt(overspend)}.",
+                    detail=f"Категория «{cat_label(budget.category)}» вышла за лимит на {self._fmt(overspend)}.",
                     severity=severity,
                     category=budget.category,
                     amount=overspend,
@@ -213,7 +214,7 @@ class FinancialAnalyticsService:
                 candidates.append(PrimaryRisk(
                     risk_type=RiskType.BUDGET_NEAR_LIMIT,
                     title="Бюджет почти исчерпан",
-                    detail=f"Категория «{budget.category}» использована на {pct:.0f}%.",
+                    detail=f"Категория «{cat_label(budget.category)}» использована на {pct:.0f}%.",
                     severity=severity,
                     category=budget.category,
                     amount=None,
