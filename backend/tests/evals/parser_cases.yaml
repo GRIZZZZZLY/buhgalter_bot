@@ -1,0 +1,84 @@
+# Golden test cases for ParserService
+# Purpose: catch regressions when YAML patterns or parser logic changes
+# Format: input -> expected transaction_type, category, amount, confidence_label
+
+cases:
+  - id: expense_coffee
+    input: "купил кофе 150"
+    expected:
+      transaction_type: expense
+      category: food
+      amount: 150
+      confidence_label: high
+
+  - id: income_salary_short
+    input: "зп 80000"
+    expected:
+      transaction_type: income
+      category: salary
+      amount: 80000
+      confidence_label: high
+
+  - id: expense_taxi
+    input: "такси 600"
+    expected:
+      transaction_type: expense
+      category: transport
+      amount: 600
+      confidence_label: high
+
+  - id: expense_rent
+    input: "аренда 45000"
+    expected:
+      transaction_type: expense
+      category: housing
+      amount: 45000
+      confidence_label: high
+
+  - id: expense_pharmacy
+    input: "аптека 350"
+    expected:
+      transaction_type: expense
+      category: health
+      amount: 350
+      confidence_label: high
+
+  - id: expense_groceries
+    input: "продукты 2500"
+    expected:
+      transaction_type: expense
+      category: food
+      amount: 2500
+      confidence_label: high
+
+  - id: expense_fuel
+    input: "бензин 4000"
+    expected:
+      transaction_type: expense
+      category: transport
+      amount: 4000
+      confidence_label: high
+
+  - id: income_salary_long
+    input: "зарплата 150000"
+    expected:
+      transaction_type: income
+      category: salary
+      amount: 150000
+      confidence_label: high
+
+  - id: expense_cinema
+    input: "кино 800"
+    expected:
+      transaction_type: expense
+      category: entertainment
+      amount: 800
+      confidence_label: high
+
+  - id: expense_subscription
+    input: "подписка 299"
+    expected:
+      transaction_type: expense
+      category: subscriptions
+      amount: 299
+      confidence_label: high

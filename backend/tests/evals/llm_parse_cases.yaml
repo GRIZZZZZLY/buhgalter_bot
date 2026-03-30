@@ -1,0 +1,117 @@
+# Golden test cases for LLMService._parse_response()
+# Purpose: catch prompt/model regressions — verify JSON → LLMResult parsing is stable
+# Each case provides a mocked LLM JSON response and the expected parsed fields.
+# Tests use unittest.mock to patch the API call.
+
+cases:
+  - id: single_expense_restaurant
+    input: "поел в ресторане на 3200"
+    mock_response: |
+      {
+        "intent": "transaction",
+        "items": [
+          {
+            "type": "expense",
+            "amount": 3200,
+            "category": "food",
+            "description": "ресторан",
+            "date_offset_days": 0
+          }
+        ],
+        "confidence": 0.95
+      }
+    expected:
+      intent: transaction
+      items_count: 1
+      first_item:
+        transaction_type: expense
+        category: food
+        amount: 3200
+
+  - id: income_freelance
+    input: "получил оплату за фриланс 25000"
+    mock_response: |
+      {
+        "intent": "transaction",
+        "items": [
+          {
+            "type": "income",
+            "amount": 25000,
+            "category": "other_income",
+            "description": "фриланс",
+            "date_offset_days": 0
+          }
+        ],
+        "confidence": 0.9
+      }
+    expected:
+      intent: transaction
+      items_count: 1
+      first_item:
+        transaction_type: income
+        amount: 25000
+
+  - id: multi_item_shopping
+    input: "купил продукты 1500 и бензин 2000"
+    mock_response: |
+      {
+        "intent": "transaction",
+        "items": [
+          {
+            "type": "expense",
+            "amount": 1500,
+            "category": "food",
+            "description": "продукты",
+            "date_offset_days": 0
+          },
+          {
+            "type": "expense",
+            "amount": 2000,
+            "category": "transport",
+            "description": "бензин",
+            "date_offset_days": 0
+          }
+        ],
+        "confidence": 0.92
+      }
+    expected:
+      intent: transaction
+      items_count: 2
+      first_item:
+        transaction_type: expense
+        category: food
+        amount: 1500
+
+  - id: advisor_question
+    input: "сколько я потратил на еду в этом месяце?"
+    mock_response: |
+      {
+        "intent": "advisor",
+        "answer": "Чтобы ответить, мне нужно посмотреть твои расходы."
+      }
+    expected:
+      intent: advisor
+
+  - id: expense_yesterday
+    input: "вчера заплатил за парковку 200"
+    mock_response: |
+      {
+        "intent": "transaction",
+        "items": [
+          {
+            "type": "expense",
+            "amount": 200,
+            "category": "transport",
+            "description": "парковка",
+            "date_offset_days": -1
+          }
+        ],
+        "confidence": 0.88
+      }
+    expected:
+      intent: transaction
+      items_count: 1
+      first_item:
+        transaction_type: expense
+        category: transport
+        amount: 200
