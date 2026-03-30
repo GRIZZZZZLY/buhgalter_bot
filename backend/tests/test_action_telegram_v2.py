@@ -55,7 +55,7 @@ async def test_apply_confirm_success_stores_last_action_result() -> None:
         undo_payload={"action_type": "set_budget", "category": "food", "old_amount": 0.0},
     )
 
-    with patch("app.telegram.runtime.SessionLocal") as mock_session_cls:
+    with patch("app.telegram.handlers.advisor.SessionLocal") as mock_session_cls:
         mock_db = MagicMock()
         mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
         mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -93,7 +93,7 @@ async def test_apply_confirm_failure_does_not_store_last_action() -> None:
         message="Не поддерживается.",
     )
 
-    with patch("app.telegram.runtime.SessionLocal") as mock_session_cls:
+    with patch("app.telegram.handlers.advisor.SessionLocal") as mock_session_cls:
         mock_db = MagicMock()
         mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
         mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -119,8 +119,8 @@ async def test_second_undo_not_possible() -> None:
     now = 1000000
     ctx = _make_context(last_action_result=last_result, last_action_ts=now - 5)
 
-    with patch("app.telegram.runtime._time_now", return_value=now):
-        with patch("app.telegram.runtime.SessionLocal") as mock_session_cls:
+    with patch("app.telegram.handlers.advisor._time_now", return_value=now):
+        with patch("app.telegram.handlers.advisor.SessionLocal") as mock_session_cls:
             mock_db = MagicMock()
             mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)

@@ -47,8 +47,8 @@ async def test_undo_within_ttl_succeeds() -> None:
     now = 1000000
     ctx = _make_context(last_action_result=last_result, last_ts=now - 10)  # 10 сек назад — в пределах TTL=60
 
-    with patch("app.telegram.runtime._time_now", return_value=now):
-        with patch("app.telegram.runtime.SessionLocal") as mock_session_cls:
+    with patch("app.telegram.handlers.advisor._time_now", return_value=now):
+        with patch("app.telegram.handlers.advisor.SessionLocal") as mock_session_cls:
             mock_db = MagicMock()
             mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)

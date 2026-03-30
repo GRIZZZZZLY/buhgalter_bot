@@ -47,7 +47,7 @@ async def test_apply_confirm_executes_set_budget() -> None:
     update = _make_update(query)
     ctx = _make_context(pending_action=action)
 
-    with patch("app.telegram.runtime.SessionLocal") as mock_session_cls:
+    with patch("app.telegram.handlers.advisor.SessionLocal") as mock_session_cls:
         mock_db = MagicMock()
         mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
         mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -98,7 +98,7 @@ async def test_apply_confirm_failure_result_shown_to_user() -> None:
     update = _make_update(query)
     ctx = _make_context(pending_action=action)
 
-    with patch("app.telegram.runtime.SessionLocal") as mock_session_cls:
+    with patch("app.telegram.handlers.advisor.SessionLocal") as mock_session_cls:
         mock_db = MagicMock()
         mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
         mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)

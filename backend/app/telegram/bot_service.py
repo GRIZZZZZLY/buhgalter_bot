@@ -11,7 +11,7 @@ from app.services.audio_file_service import AudioFileService
 from app.services.transaction_service import TransactionService
 from app.services.yaml_learner_service import YamlLearnerService
 from app.telegram.formatter import TreasuryFormatter
-from app.telegram.handlers import TelegramTextFlow
+from app.telegram.handlers_legacy import TelegramTextFlow
 
 _KEYWORD_STOPLIST = {
     "оплата", "перевод", "платёж", "платеж", "покупка",

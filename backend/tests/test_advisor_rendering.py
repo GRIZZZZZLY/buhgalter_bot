@@ -1,4 +1,4 @@
-from app.telegram.runtime import _format_advisor_payload
+from app.telegram.handlers.advisor import _format_advisor_payload
 
 
 def test_format_advisor_payload_with_sections() -> None:
