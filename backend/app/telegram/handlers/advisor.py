@@ -29,14 +29,8 @@ _MAX_SESSION_RECOMMENDATIONS = 5
 
 _ADVISOR_ONBOARDING = (
     "🧠 *Финансовый советник*\n\n"
-    "Ты можешь:\n"
-    "• задать вопрос по своим финансам\n"
-    "• импортировать CSV/XLSX и анализировать отчёт\n"
-    "• быстро проверить бюджеты, риски и ближайшие платежи\n"
-    "• говорить текстом или голосом\n\n"
-    "Начни так:\n"
-    "• импортируй файл, если хочешь анализ по выписке\n"
-    "• или просто задай вопрос ниже"
+    "Выбери сценарий ниже — или напиши свой вопрос, например:\n"
+    "_«сколько я потратил на кафе за месяц?»_"
 )
 
 _ADVISOR_SCENARIO_QUESTIONS = {
@@ -206,6 +200,9 @@ async def _answer_advisor_question(
             action_type=_action_type,
             _payload_obj=payload,
         )
+
+    if dialog_mode and payload.response_mode != ResponseMode.SHORT:
+        answer = answer + "\n\n💬 Задай любой вопрос текстом"
 
     context.user_data["last_advisor_snapshot"] = payload.snapshot
     context.user_data["last_advisor_analytics"] = payload.analytics

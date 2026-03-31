@@ -189,24 +189,9 @@ def advisor_apply_keyboard(payload, action_type: str | None = None, category: st
 
 
 def advisor_session_keyboard(recommendations: RecommendationSnapshot | None = None) -> InlineKeyboardMarkup:
-    """Keyboard after each advisor answer in dialog mode with action buttons and quick follow-up scenarios."""
+    """Keyboard after each advisor answer in dialog mode."""
     rows = advisor_action_rows(recommendations)
-    rows.extend([
-        [
-            _advisor_scenario_btn("budget_risks", "⚠️ Бюджеты"),
-            _advisor_scenario_btn("upcoming", "📅 Скоро"),
-        ],
-        [
-            _advisor_scenario_btn("top_expenses", "📊 Топ"),
-            _advisor_scenario_btn("trends_3m", "📈 3 месяца"),
-        ],
-        [
-            _advisor_scenario_btn("cut_costs", "💡 Сократить"),
-            _advisor_scenario_btn("export", "📥 Отчёт"),
-        ],
-        [_back_btn("nav:advisor"), _btn("✕ Завершить", "nav:menu")],
-        [_menu_btn()],
-    ])
+    rows.append([_btn("🔍 Другие темы", "nav:advisor"), _btn("✕ Завершить", "nav:menu")])
     return InlineKeyboardMarkup(rows)
 
 
