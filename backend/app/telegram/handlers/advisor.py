@@ -33,6 +33,15 @@ _ADVISOR_ONBOARDING = (
     "_«сколько я потратил на кафе за месяц?»_"
 )
 
+_ADVISOR_HINT_EXAMPLES = [
+    "на что уходит больше всего денег?",
+    "сколько я потратил на еду за месяц?",
+    "где я перерасходовал в этом месяце?",
+    "как изменились мои расходы за 3 месяца?",
+    "что стоит сократить прямо сейчас?",
+    "какие платежи у меня скоро?",
+]
+
 _ADVISOR_SCENARIO_QUESTIONS = {
     "top_expenses": "Покажи топ расходов за этот месяц и на что уходит больше всего денег.",
     "budget_risks": "Где я уже вылезаю из бюджета и по каким категориям риск перерасхода?",
@@ -202,7 +211,10 @@ async def _answer_advisor_question(
         )
 
     if dialog_mode and payload.response_mode != ResponseMode.SHORT:
-        answer = answer + "\n\n💬 Задай любой вопрос текстом"
+        idx = context.user_data.get("advisor_hint_idx", 0)
+        example = _ADVISOR_HINT_EXAMPLES[idx % len(_ADVISOR_HINT_EXAMPLES)]
+        context.user_data["advisor_hint_idx"] = idx + 1
+        answer = answer + f"\n\n💬 Задай вопрос по своим финансам — например: «{example}»"
 
     context.user_data["last_advisor_snapshot"] = payload.snapshot
     context.user_data["last_advisor_analytics"] = payload.analytics
